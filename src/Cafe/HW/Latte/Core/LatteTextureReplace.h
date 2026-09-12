@@ -34,6 +34,10 @@ namespace LatteTextureReplace
 	bool IsReplaceableUncompressed(Latte::E_GX2SURFFMT format);
 	const LatteTextureReplace_Entry* GetSlice(uint64_t contentHash, int mipIndex);
 
+	// Appends one <old>,<new> filename pair to dump/textures/rename_map.csv. See the definition.
+	void RecordRenameMapping(uint64_t legacyHash, uint64_t newHash, int width, int height, uint32_t gx2Format, int mipIndex);
+	void ResetRenameMapping();
+
 	// size/format of the replacement, used to size the host texture (no [TextureRedefine] needed)
 	struct ReplacementInfo { int width=0, height=0; bool hasFormat=false; uint32_t gx2Format=0; };
 	bool GetInfo(uint64_t contentHash, ReplacementInfo& out);

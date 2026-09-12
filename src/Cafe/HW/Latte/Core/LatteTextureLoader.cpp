@@ -649,7 +649,19 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		(tex->overwriteInfo.hasResolutionOverwrite && !tex->replOverwriteIsOurs);
 	const bool _replUncompressed = LatteTextureReplace::IsReplaceableUncompressed(format) && !_replGpuOwned;
 	if (mipIndex == 0 && sliceIndex == 0 && LatteTextureReplace::IsEnabled() && (Latte::IsCompressedFormat(format) || _replUncompressed))
+	{
 		tex->replStrongHash = LatteTextureReplace::HashGuest(physImagePtr, (uint32)textureLoader.maxOffsetOutdated, tex->width * tex->height, format);
+		// Same inputs, pre-discriminator algorithm. Only used to build rename_map.csv so an existing
+		// pack can be migrated to the new names; nothing looks a texture up by this. Recorded here
+		// rather than from the dump block below because it needs only the two hashes, and because
+		// both are constant across a surface's mip levels.
+		if (ActiveSettings::DumpTexturesEnabled())
+		{
+			tex->replLegacyHash = LatteTextureReplace::HashGuestRaw(physImagePtr, (uint32)textureLoader.maxOffsetOutdated);
+			for (sint32 m = 0; m < std::max<sint32>(1, tex->mipLevels); m++)
+				LatteTextureReplace::RecordRenameMapping(tex->replLegacyHash, tex->replStrongHash, tex->width, tex->height, (uint32)format, m);
+		}
+	}
 
 	if (tex->isDataDefined == false && LatteTextureReplace::IsEnabled() && Latte::IsCompressedFormat(format))
 	{
@@ -782,7 +794,7 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 			// filename can be reused verbatim as the replacement filename
 			uint64 texHashForDump = tex->replStrongHash;
 			if (texHashForDump == 0)
-				texHashForDump = LatteTextureReplace::HashGuestRaw(physImagePtr, (uint32)textureLoader.maxOffsetOutdated);
+				texHashForDump = LatteTextureReplace::HashGuest(physImagePtr, (uint32)textureLoader.maxOffsetOutdated, tex->width * tex->height, tex->format);
 			path /= fmt::format("{:016x}_{:d}x{:d}_fmt{:04x}_mip{:02d}.tga", texHashForDump, tex->width, tex->height, (uint32)tex->format, mipIndex);
 		}
 		else
