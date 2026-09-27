@@ -1,6 +1,10 @@
 #!/bin/bash
 
-if [ "$1" == 'X64' ]; then CPU_ARCH="x86_64"; else CPU_ARCH="aarch64"; fi
+case "${1,,}" in
+	x64|x86_64|amd64) CPU_ARCH="x86_64"; LDCONFIG_ARCH="x86-64" ;;
+	arm64|aarch64) CPU_ARCH="aarch64"; LDCONFIG_ARCH="AArch64" ;;
+	*) echo "usage: $0 x64|arm64" >&2; exit 1 ;;
+esac
 
 if [[ -z "${GITHUB_WORKSPACE}" ]]; then
 	export GITHUB_WORKSPACE="."
@@ -31,10 +35,20 @@ cp dist/linux/info.cemu.Cemu.metainfo.xml AppDir/usr/share/metainfo/info.cemu.Ce
 
 cp -r bin/* AppDir/usr/share/Cemu
 
-mv AppDir/usr/share/Cemu/Cemu AppDir/usr/bin/
+mv AppDir/usr/share/Cemu/Cemu_release AppDir/usr/bin/Cemu
 chmod +x AppDir/usr/bin/Cemu
 
-cp /usr/lib/"${CPU_ARCH}"-linux-gnu/{libsepol.so.1,libffi.so.7,libpcre.so.3,libGLU.so.1,libthai.so.0} AppDir/usr/lib
+# Bundle a few libraries that some target distros lack. Library names and
+# locations differ between distros (Debian: /usr/lib/<arch>-linux-gnu, Arch: /usr/lib),
+# so look each one up by its base name and copy whatever version this system has.
+for lib in libsepol libffi libpcre libGLU libthai; do
+	path="$(ldconfig -p | grep -E "^\s+${lib}\.so\.[0-9]+ .*${LDCONFIG_ARCH}" | head -n 1 | awk '{print $NF}')"
+	if [[ -n "${path}" ]]; then
+		cp -L "${path}" AppDir/usr/lib/
+	else
+		echo "note: ${lib} not found, not bundled"
+	fi
+done
 
 export UPD_INFO="gh-releases-zsync|cemu-project|Cemu|ci|Cemu.AppImage.zsync"
 export NO_STRIP=1
@@ -43,7 +57,6 @@ export NO_STRIP=1
   -d "${GITHUB_WORKSPACE}"/AppDir/info.cemu.Cemu.desktop \
   -i "${GITHUB_WORKSPACE}"/AppDir/info.cemu.Cemu.png \
   -e "${GITHUB_WORKSPACE}"/AppDir/usr/bin/Cemu \
-  --plugin gtk \
   --plugin checkrt
 
 if ! GITVERSION="$(git rev-parse --short HEAD 2>/dev/null)"; then
@@ -51,7 +64,7 @@ if ! GITVERSION="$(git rev-parse --short HEAD 2>/dev/null)"; then
 fi
 echo "Cemu Version Cemu-${GITVERSION}"
 
-rm AppDir/usr/lib/libwayland-client.so.0
+rm -f AppDir/usr/lib/libwayland-client.so.0
 echo -e "export LC_ALL=C\nexport FONTCONFIG_PATH=/etc/fonts" >> AppDir/apprun-hooks/linuxdeploy-plugin-gtk.sh
 VERSION="${GITVERSION}" ./mkappimage.AppImage --appimage-extract-and-run "${GITHUB_WORKSPACE}"/AppDir
 
