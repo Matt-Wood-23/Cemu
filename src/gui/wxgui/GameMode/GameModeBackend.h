@@ -31,6 +31,33 @@ namespace GameMode
 		Settings // Y
 	};
 
+	// Which physical face button a menu action is on, so the hints can show the right glyph.
+	enum class Face
+	{
+		South,
+		East,
+		West,
+		North,
+	};
+
+	// Button glyph families for the hints
+	enum class ButtonStyle
+	{
+		Nintendo = 0,
+		Xbox = 1,
+		PlayStation = 2,
+		SteamDeck = 3,
+		Count
+	};
+
+	// One Wii U button of a player's controller and what it is bound to
+	struct MappingEntry
+	{
+		uint64_t id = 0;
+		wxString name;  // "A", "ZL", "Left stick up", ...
+		wxString bound; // physical button name, empty when unbound
+	};
+
 	struct GameEntry
 	{
 		uint64_t titleId = 0;
@@ -108,6 +135,31 @@ namespace GameMode
 		virtual void BeginGameMenuCapture() = 0;
 		virtual bool PollGameMenuCapture() = 0;
 		virtual void BindGameMenuKey(int wxKeyCode, bool alt, bool ctrl, bool shift) = 0;
+
+		// Per player setup (the remapper). Only used with no game running.
+		virtual Choice GetPlayerControllerType(int player) = 0; // empty options when disabled
+		virtual std::optional<wxString> SetPlayerControllerType(int player, int index) = 0;
+		virtual Choice GetPlayerDevice(int player) = 0; // connected controllers
+		virtual std::optional<wxString> SetPlayerDevice(int player, int index) = 0;
+		virtual void RefreshDevices() = 0;
+		virtual std::vector<MappingEntry> GetMappings(int player) = 0;
+		virtual void ClearMapping(int player, uint64_t mapping) = 0;
+		virtual void ResetMappings(int player) = 0;
+		// Waits for a press on one of the player's devices; PollMappingCapture returns true once bound.
+		virtual void BeginMappingCapture(int player, uint64_t mapping) = 0;
+		virtual bool PollMappingCapture() = 0;
+		virtual std::vector<wxString> GetProfileNames() = 0;
+		// Saves the player's current setup as a profile. Returns an error message on failure.
+		virtual std::optional<wxString> SaveProfile(int player, const wxString& name) = 0;
+		virtual void ResetGameMenuBinding() = 0;
+
+		// ---- Game Mode preferences ----
+		virtual bool GetAlwaysBootGameMode() = 0;
+		virtual void SetAlwaysBootGameMode(bool enabled) = 0;
+		virtual ButtonStyle GetButtonStyle() = 0;
+		virtual void SetButtonStyle(ButtonStyle style) = 0;
+		// Physical position of the button behind a menu action for player 1's mapping.
+		virtual Face GetNavFace(Nav nav) = 0;
 
 		// ---- navigation ----
 		// Called every frame; appends navigation edges from the players' controllers (with repeat

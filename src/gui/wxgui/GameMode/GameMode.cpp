@@ -4,6 +4,7 @@
 #include "config/CemuConfig.h"
 #include "input/InputManager.h"
 #include "input/api/Controller.h"
+#include "wxgui/wxCemuConfig.h"
 #include "input/emulated/ClassicController.h"
 #include "input/emulated/ProController.h"
 #include "input/emulated/VPADController.h"
@@ -91,6 +92,86 @@ namespace GameMode
 		case kIntegerScale: return _("Integer scale (pixel-sharp)");
 		default: return _("Fit (keep aspect ratio)");
 		}
+	}
+
+	ButtonStyle GetButtonStyle()
+	{
+		const sint32 style = GetWxGUIConfig().game_mode_buttons;
+		return (style >= 0 && style < (sint32)ButtonStyle::Count) ? (ButtonStyle)style : ButtonStyle::Nintendo;
+	}
+
+	wxString ButtonStyleName(ButtonStyle style)
+	{
+		switch (style)
+		{
+		case ButtonStyle::Xbox: return _("Xbox");
+		case ButtonStyle::PlayStation: return _("PlayStation");
+		case ButtonStyle::SteamDeck: return _("Steam Deck (SteamOS)");
+		default: return _("Nintendo");
+		}
+	}
+
+	wxString FaceLetter(ButtonStyle style, Face face)
+	{
+		if (style == ButtonStyle::Nintendo)
+		{
+			switch (face)
+			{
+			case Face::South: return "B";
+			case Face::East: return "A";
+			case Face::West: return "Y";
+			default: return "X";
+			}
+		}
+		// Xbox and Steam Deck share the letters
+		switch (face)
+		{
+		case Face::South: return "A";
+		case Face::East: return "B";
+		case Face::West: return "X";
+		default: return "Y";
+		}
+	}
+
+	Face FaceForNav(Nav nav)
+	{
+		// Cemu's default gamepad mapping is positional (Nintendo layout)
+		Face fallback = Face::East;
+		switch (nav)
+		{
+		case Nav::Back: fallback = Face::South; break;
+		case Nav::Options: fallback = Face::North; break;
+		case Nav::Settings: fallback = Face::West; break;
+		default: break;
+		}
+		std::shared_ptr<EmulatedController> controller;
+		for (size_t i = 0; i < InputManager::kMaxController && !controller; i++)
+			controller = InputManager::instance().get_controller(i);
+		if (!controller)
+			return fallback;
+		uint64 mapping = 0;
+		const bool x = nav == Nav::Options, y = nav == Nav::Settings, a = nav == Nav::Accept, b = nav == Nav::Back;
+		switch (controller->type())
+		{
+		case EmulatedController::VPAD:
+			mapping = a ? VPADController::kButtonId_A : b ? VPADController::kButtonId_B : x ? VPADController::kButtonId_X : y ? VPADController::kButtonId_Y : 0;
+			break;
+		case EmulatedController::Pro:
+			mapping = a ? ProController::kButtonId_A : b ? ProController::kButtonId_B : x ? ProController::kButtonId_X : y ? ProController::kButtonId_Y : 0;
+			break;
+		case EmulatedController::Classic:
+			mapping = a ? ClassicController::kButtonId_A : b ? ClassicController::kButtonId_B : x ? ClassicController::kButtonId_X : y ? ClassicController::kButtonId_Y : 0;
+			break;
+		default:
+			return fallback;
+		}
+		const auto device = controller->get_mapping_controller(mapping);
+		const auto button = controller->get_mapping_button(mapping);
+		if (!device || !button || device->api() != InputAPI::SDLController || *button > 3)
+			return fallback;
+		// SDL gamepad buttons: 0 south, 1 east, 2 west, 3 north
+		static constexpr Face kSdlFaces[] = {Face::South, Face::East, Face::West, Face::North};
+		return kSdlFaces[*button];
 	}
 
 	// X and Y are not part of the generic EmulatedController interface; each controller type

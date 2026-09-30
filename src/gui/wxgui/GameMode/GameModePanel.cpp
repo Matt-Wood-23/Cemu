@@ -112,6 +112,27 @@ namespace
 		gc->StrokePath(path);
 	}
 
+	wxString ButtonStyleLabel(GameMode::ButtonStyle style)
+	{
+		switch (style)
+		{
+		case GameMode::ButtonStyle::Xbox: return _("Xbox");
+		case GameMode::ButtonStyle::PlayStation: return _("PlayStation");
+		case GameMode::ButtonStyle::SteamDeck: return _("Steam Deck (SteamOS)");
+		default: return _("Nintendo");
+		}
+	}
+
+	// letter printed on a face button (same table as GameMode::FaceLetter; kept here so the
+	// panel only depends on GameModeBackend.h)
+	wxString FaceLabel(GameMode::ButtonStyle style, GameMode::Face face)
+	{
+		using GameMode::Face;
+		if (style == GameMode::ButtonStyle::Nintendo)
+			return face == Face::South ? "B" : face == Face::East ? "A" : face == Face::West ? "Y" : "X";
+		return face == Face::South ? "A" : face == Face::East ? "B" : face == Face::West ? "X" : "Y";
+	}
+
 	wxLongLong NowMs()
 	{
 		return wxGetUTCTimeMillis();
@@ -413,6 +434,33 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 		header.label = _("Game Mode");
 		rows.push_back(header);
 
+		Row boot;
+		boot.kind = RowKind::Toggle;
+		boot.label = _("Always boot to Game Mode");
+		boot.description = _("Start Cemu in Game Mode, even after exiting it");
+		boot.getBool = [this]() { return m_backend->GetAlwaysBootGameMode(); };
+		boot.setBool = [this](bool v) { m_backend->SetAlwaysBootGameMode(v); };
+		rows.push_back(boot);
+
+		Row buttons;
+		buttons.kind = RowKind::Choice;
+		buttons.label = _("Button icons");
+		buttons.description = _("Which controller's buttons the on-screen hints show");
+		buttons.getChoice = []() {
+			GameMode::Choice choice;
+			for (int i = 0; i < (int)GameMode::ButtonStyle::Count; i++)
+				choice.options.push_back(ButtonStyleLabel((GameMode::ButtonStyle)i));
+			return choice;
+		};
+		auto baseChoice = buttons.getChoice;
+		buttons.getChoice = [this, baseChoice]() {
+			auto choice = baseChoice();
+			choice.selected = (int)m_backend->GetButtonStyle();
+			return choice;
+		};
+		buttons.setChoice = [this](int i) { m_backend->SetButtonStyle((GameMode::ButtonStyle)i); };
+		rows.push_back(buttons);
+
 		Row exit;
 		exit.kind = RowKind::Action;
 		exit.label = _("Exit Game Mode");
@@ -500,19 +548,20 @@ GameModePanel::Page GameModePanel::MakeInputPage()
 		std::vector<Row> rows;
 		Row header;
 		header.kind = RowKind::Header;
-		header.label = _("Controller profiles");
+		header.label = _("Players");
 		rows.push_back(header);
 		for (int player = 0; player < b->GetPlayerCount(); player++)
 		{
 			Row row;
-			row.kind = RowKind::Choice;
+			row.kind = RowKind::Link;
 			row.label = wxString::Format(_("Player %d"), player + 1);
-			row.getChoice = [b, player]() { return b->GetPlayerProfile(player); };
-			row.setChoice = [this, b, player](int index) {
-				if (const auto error = b->SetPlayerProfile(player, index))
-					ShowToast(*error);
-				else if (index > 0)
-					ShowToast(wxString::Format(_("Player %d profile loaded"), player + 1));
+			row.getValueText = [b, player]() {
+				const auto choice = b->GetPlayerProfile(player);
+				return (choice.selected >= 0 && choice.selected < (int)choice.options.size()) ? choice.options[choice.selected] : wxString();
+			};
+			row.action = [this, b, player]() {
+				b->RefreshDevices();
+				PushPage(MakePlayerPage(player));
 			};
 			rows.push_back(row);
 		}
@@ -528,13 +577,155 @@ GameModePanel::Page GameModePanel::MakeInputPage()
 		bind.description = _("Opens the side menu while playing. Select, then press the new button or key.");
 		bind.getValueText = [b]() { return b->GetGameMenuBindingLabel(); };
 		bind.action = [this]() { StartGameMenuCapture(); };
+		bind.onOptions = [this, b]() {
+			b->ResetGameMenuBinding();
+			ShowToast(wxString::Format(_("Game Menu button: %s"), b->GetGameMenuBindingLabel()));
+		};
+		bind.optionsLabel = _("Reset");
 		rows.push_back(bind);
 
-		Row note;
-		note.kind = RowKind::Info;
-		note.label = _("Button mapping");
-		note.description = _("Profiles are created and edited in Options > Input settings in the regular Cemu window.");
-		rows.push_back(note);
+		Row reset;
+		reset.kind = RowKind::Action;
+		reset.label = _("Reset Game Menu button");
+		reset.description = _("Back to the default: Guide button and F10");
+		reset.action = [this, b]() {
+			b->ResetGameMenuBinding();
+			ShowToast(wxString::Format(_("Game Menu button: %s"), b->GetGameMenuBindingLabel()));
+		};
+		rows.push_back(reset);
+		return rows;
+	};
+	return page;
+}
+
+// One player's setup, like the Android app's input screen: profile, controller type, device, and
+// every Wii U button with what it is bound to. Select a button and press the new one; X clears it.
+GameModePanel::Page GameModePanel::MakePlayerPage(int player)
+{
+	Page page;
+	page.title = wxString::Format(_("Player %d"), player + 1);
+	GameMode::Backend* b = m_backend.get();
+	page.build = [this, b, player]() {
+		std::vector<Row> rows;
+		auto report = [this](const std::optional<wxString>& error) {
+			if (error)
+				ShowToast(*error);
+		};
+
+		Row profile;
+		profile.kind = RowKind::Choice;
+		profile.label = _("Profile");
+		profile.description = _("Disabled turns this player off");
+		profile.getChoice = [b, player]() { return b->GetPlayerProfile(player); };
+		profile.setChoice = [b, player, report](int i) { report(b->SetPlayerProfile(player, i)); };
+		rows.push_back(profile);
+
+		const bool enabled = !b->GetPlayerControllerType(player).options.empty();
+		Row type;
+		type.kind = RowKind::Choice;
+		type.label = _("Controller type");
+		type.description = _("The Wii U controller this player emulates");
+		type.getChoice = [b, player]() {
+			auto choice = b->GetPlayerControllerType(player);
+			if (choice.options.empty())
+				choice.options = {_("Wii U GamePad"), _("Wii U Pro Controller"), _("Classic Controller"), _("Wii Remote")};
+			return choice;
+		};
+		type.setChoice = [b, player, report](int i) { report(b->SetPlayerControllerType(player, i)); };
+		rows.push_back(type); // choosing a type also enables a disabled player
+
+		Row device;
+		device.kind = RowKind::Choice;
+		device.label = _("Input device");
+		device.description = _("Choosing a device gives it the default button layout");
+		device.getChoice = [b, player]() { return b->GetPlayerDevice(player); };
+		device.setChoice = [b, player, report](int i) { report(b->SetPlayerDevice(player, i)); };
+		device.isEnabled = [b, player]() { return !b->GetPlayerControllerType(player).options.empty(); };
+		device.onOptions = [this, b]() {
+			b->RefreshDevices();
+			ShowToast(_("Controller list refreshed"));
+		};
+		device.optionsLabel = _("Refresh");
+		rows.push_back(device);
+
+		if (!enabled)
+		{
+			Row info;
+			info.kind = RowKind::Info;
+			info.label = _("This player is disabled");
+			info.description = _("Pick a profile or a controller type to set it up.");
+			rows.push_back(info);
+			return rows;
+		}
+
+		Row resetMapping;
+		resetMapping.kind = RowKind::Action;
+		resetMapping.label = _("Reset buttons to default");
+		resetMapping.action = [this, b, player]() {
+			OpenConfirmDialog(_("Reset buttons?"), _("Every button goes back to the default layout for this device."), [this, b, player]() {
+				b->ResetMappings(player);
+				RebuildCurrent();
+			});
+		};
+		rows.push_back(resetMapping);
+
+		Row save;
+		save.kind = RowKind::Action;
+		save.label = _("Save to profile");
+		save.description = _("Store this setup so it can be picked for any player");
+		save.action = [this, b, player]() {
+			GameMode::Choice choice;
+			const auto names = b->GetProfileNames();
+			// a fresh name for a new profile
+			wxString fresh;
+			for (int n = 1;; n++)
+			{
+				fresh = n == 1 ? wxString::Format("Player %d", player + 1) : wxString::Format("Player %d (%d)", player + 1, n);
+				if (std::find(names.begin(), names.end(), fresh) == names.end())
+					break;
+			}
+			choice.options.push_back(wxString::Format(_("New profile: %s"), fresh));
+			for (const auto& name : names)
+				choice.options.push_back(wxString::Format(_("Overwrite: %s"), name));
+			OpenChoiceDialog(_("Save to profile"), choice, [this, b, player, names, fresh](int i) {
+				const wxString name = i == 0 ? fresh : names[i - 1];
+				if (const auto error = b->SaveProfile(player, name))
+					ShowToast(*error);
+				else
+					ShowToast(wxString::Format(_("Saved as %s"), name));
+				RebuildCurrent();
+			});
+		};
+		rows.push_back(save);
+
+		Row header;
+		header.kind = RowKind::Header;
+		header.label = _("Buttons");
+		rows.push_back(header);
+
+		for (const auto& entry : b->GetMappings(player))
+		{
+			Row row;
+			row.kind = RowKind::Action;
+			row.label = entry.name;
+			const uint64_t id = entry.id;
+			row.getValueText = [b, player, id]() {
+				for (const auto& e : b->GetMappings(player))
+					if (e.id == id)
+						return e.bound.empty() ? wxString(_("Not set")) : e.bound;
+				return wxString();
+			};
+			const wxString name = entry.name;
+			row.action = [this, b, player, id, name]() {
+				b->BeginMappingCapture(player, id);
+				StartCapture(wxString::Format(_("Button: %s"), name), _("Press the button to use on the controller..."),
+					[b]() { return b->PollMappingCapture(); }, nullptr,
+					[this, name]() { ShowToast(wxString::Format(_("%s mapped"), name)); });
+			};
+			row.onOptions = [b, player, id]() { b->ClearMapping(player, id); };
+			row.optionsLabel = _("Clear");
+			rows.push_back(row);
+		}
 		return rows;
 	};
 	return page;
@@ -569,15 +760,31 @@ void GameModePanel::OpenConfirmDialog(const wxString& title, const wxString& mes
 	Refresh();
 }
 
-void GameModePanel::StartGameMenuCapture()
+void GameModePanel::StartCapture(const wxString& title, const wxString& message, std::function<bool()> poll,
+	std::function<bool(int, bool, bool, bool)> onKey, std::function<void()> onDone)
 {
 	m_dialog = Dialog{};
 	m_dialog.type = Dialog::Type::Capture;
-	m_dialog.title = _("Game Menu button");
-	m_dialog.message = _("Press a controller button or a key...");
+	m_dialog.title = title;
+	m_dialog.message = message;
 	m_dialog.startedMs = NowMs();
-	m_backend->BeginGameMenuCapture();
+	m_dialog.poll = std::move(poll);
+	m_dialog.onKey = std::move(onKey);
+	m_dialog.onDone = std::move(onDone);
 	Refresh();
+}
+
+void GameModePanel::StartGameMenuCapture()
+{
+	GameMode::Backend* b = m_backend.get();
+	b->BeginGameMenuCapture();
+	StartCapture(_("Game Menu button"), _("Press a controller button or a key..."),
+		[b]() { return b->PollGameMenuCapture(); },
+		[b](int key, bool alt, bool ctrl, bool shift) {
+			b->BindGameMenuKey(key, alt, ctrl, shift);
+			return true;
+		},
+		[this, b]() { ShowToast(wxString::Format(_("Game Menu button: %s"), b->GetGameMenuBindingLabel())); });
 }
 
 void GameModePanel::ShowToast(const wxString& message)
@@ -693,6 +900,12 @@ void GameModePanel::HandleListNav(Page& page, Nav nav)
 			PopPage(); // Y toggles Settings from the library
 		break;
 	case Nav::Options:
+		if (row && row->onOptions && row->Enabled())
+		{
+			auto onOptions = row->onOptions;
+			onOptions();
+			RebuildCurrent();
+		}
 		break;
 	}
 }
@@ -818,10 +1031,12 @@ void GameModePanel::OnTimer(wxTimerEvent& event)
 
 	if (m_dialog.type == Dialog::Type::Capture)
 	{
-		if (m_backend->PollGameMenuCapture())
+		if (m_dialog.poll && m_dialog.poll())
 		{
+			auto onDone = m_dialog.onDone;
 			m_dialog = Dialog{};
-			ShowToast(wxString::Format(_("Game Menu button: %s"), m_backend->GetGameMenuBindingLabel()));
+			if (onDone)
+				onDone();
 			RebuildCurrent();
 			// swallow the press that was just captured so it does not also navigate
 			m_navScratch.clear();
@@ -831,7 +1046,10 @@ void GameModePanel::OnTimer(wxTimerEvent& event)
 		else if (now - m_dialog.startedMs > 6000)
 		{
 			m_dialog = Dialog{};
-			ShowToast(_("No button pressed, binding unchanged"));
+			ShowToast(_("Nothing pressed, left unchanged"));
+			m_navScratch.clear();
+			m_backend->PollControllerNav(m_navScratch);
+			m_navScratch.clear();
 		}
 		dirty = true;
 	}
@@ -890,11 +1108,21 @@ void GameModePanel::OnKeyDown(wxKeyEvent& event)
 	if (m_dialog.type == Dialog::Type::Capture)
 	{
 		// modifiers alone are not a binding
-		if (key != WXK_SHIFT && key != WXK_CONTROL && key != WXK_ALT && key != WXK_RAW_CONTROL)
+		if (key == WXK_SHIFT || key == WXK_CONTROL || key == WXK_ALT || key == WXK_RAW_CONTROL)
+			return;
+		if (!m_dialog.onKey)
 		{
-			m_backend->BindGameMenuKey(key, event.AltDown(), event.ControlDown(), event.ShiftDown());
+			if (key == WXK_ESCAPE)
+				m_dialog = Dialog{}; // keys cannot be bound here; Esc cancels
+			Refresh();
+			return;
+		}
+		if (m_dialog.onKey(key, event.AltDown(), event.ControlDown(), event.ShiftDown()))
+		{
+			auto onDone = m_dialog.onDone;
 			m_dialog = Dialog{};
-			ShowToast(wxString::Format(_("Game Menu button: %s"), m_backend->GetGameMenuBindingLabel()));
+			if (onDone)
+				onDone();
 			RebuildCurrent();
 		}
 		return;
@@ -1088,7 +1316,11 @@ std::vector<std::pair<Nav, wxString>> GameModePanel::CurrentHints() const
 			return {{Nav::Settings, _("Settings")}};
 		return {{Nav::Accept, _("Play")}, {Nav::Options, _("Game options")}, {Nav::Settings, _("Settings")}};
 	}
-	return {{Nav::Accept, _("Select")}, {Nav::Back, _("Back")}};
+	std::vector<std::pair<Nav, wxString>> hints{{Nav::Accept, _("Select")}};
+	if (page.focus >= 0 && page.focus < (int)page.rows.size() && page.rows[page.focus].onOptions)
+		hints.emplace_back(Nav::Options, page.rows[page.focus].optionsLabel);
+	hints.emplace_back(Nav::Back, _("Back"));
+	return hints;
 }
 
 wxBitmap GameModePanel::GetScaledIcon(uint64_t titleId, int size)
@@ -1135,10 +1367,79 @@ void GameModePanel::DrawIcon(wxGraphicsContext* gc, uint64_t titleId, const wxSt
 	DrawTextV(gc, initial, rect.x + (rect.width - tw) / 2, rect.y + rect.height / 2.0);
 }
 
-void GameModePanel::DrawGlyph(wxGraphicsContext* gc, const wxString& letter, double cx, double cy, double radius)
+void GameModePanel::DrawGlyph(wxGraphicsContext* gc, Nav nav, double cx, double cy, double radius)
 {
-	FillCircle(gc, cx, cy, radius, kOnSurface);
-	gc->SetFont(MakeFont(radius * 1.15, true), kBackground);
+	using GameMode::ButtonStyle;
+	using GameMode::Face;
+	const ButtonStyle style = m_backend->GetButtonStyle();
+	const Face face = m_backend->GetNavFace(nav);
+	if (style == ButtonStyle::PlayStation)
+	{
+		// dark button with a coloured symbol
+		FillCircle(gc, cx, cy, radius, kSurfaceHighest);
+		gc->SetPen(wxPen(kOutline, std::max(1, (int)std::lround(radius * 0.08))));
+		gc->SetBrush(*wxTRANSPARENT_BRUSH);
+		gc->DrawEllipse(cx - radius, cy - radius, radius * 2, radius * 2);
+		const double r = radius * 0.46;
+		const double w = std::max(1.5, radius * 0.16);
+		wxGraphicsPath path = gc->CreatePath();
+		wxColour colour;
+		switch (face)
+		{
+		case Face::South: // cross
+			colour = wxColour(0x7C, 0xB2, 0xE8);
+			path.MoveToPoint(cx - r, cy - r); path.AddLineToPoint(cx + r, cy + r);
+			path.MoveToPoint(cx + r, cy - r); path.AddLineToPoint(cx - r, cy + r);
+			break;
+		case Face::East: // circle
+			colour = wxColour(0xFF, 0x6B, 0x6B);
+			path.AddCircle(cx, cy, r);
+			break;
+		case Face::West: // square
+			colour = wxColour(0xE0, 0x9E, 0xE0);
+			path.AddRectangle(cx - r * 0.9, cy - r * 0.9, r * 1.8, r * 1.8);
+			break;
+		default: // triangle
+			colour = wxColour(0x4C, 0xD9, 0xA6);
+			path.MoveToPoint(cx, cy - r);
+			path.AddLineToPoint(cx + r * 1.05, cy + r * 0.75);
+			path.AddLineToPoint(cx - r * 1.05, cy + r * 0.75);
+			path.CloseSubpath();
+			break;
+		}
+		gc->SetPen(wxPen(colour, (int)std::lround(w)));
+		gc->StrokePath(path);
+		return;
+	}
+
+	const wxString letter = FaceLabel(style, face);
+	wxColour fill = kOnSurface, text = kBackground;
+	if (style == ButtonStyle::Xbox)
+	{
+		// the classic colours: A green, B red, X blue, Y yellow
+		switch (face)
+		{
+		case Face::South: fill = wxColour(0x6C, 0xC0, 0x4A); break;
+		case Face::East: fill = wxColour(0xE8, 0x5A, 0x4F); break;
+		case Face::West: fill = wxColour(0x4A, 0x9C, 0xE8); break;
+		default: fill = wxColour(0xF2, 0xC6, 0x3C); break;
+		}
+		text = wxColour(0x14, 0x12, 0x18);
+	}
+	else if (style == ButtonStyle::SteamDeck)
+	{
+		// dark buttons with light letters
+		fill = kSurfaceHighest;
+		text = kOnSurface;
+	}
+	FillCircle(gc, cx, cy, radius, fill);
+	if (style == ButtonStyle::SteamDeck)
+	{
+		gc->SetPen(wxPen(kOutline, std::max(1, (int)std::lround(radius * 0.08))));
+		gc->SetBrush(*wxTRANSPARENT_BRUSH);
+		gc->DrawEllipse(cx - radius, cy - radius, radius * 2, radius * 2);
+	}
+	gc->SetFont(MakeFont(radius * 1.15, true), text);
 	const double tw = TextWidth(gc, letter);
 	DrawTextV(gc, letter, cx - tw / 2, cy);
 }
@@ -1202,7 +1503,8 @@ void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
 		const double chipH = S(60);
 		const double chipX = area.GetRight() - pad - chipW;
 		FillRounded(gc, chipX, cy - chipH / 2, chipW, chipH, chipH / 2, kSecondaryContainer);
-		DrawGlyph(gc, "Y", chipX + S(34), cy, S(18));
+		DrawGlyph(gc, Nav::Settings, chipX + S(34), cy, S(18));
+		gc->SetFont(MakeFont(S(26), true), kOnSecondaryContainer); // the glyph changed the font
 		DrawTextV(gc, chipText, chipX + S(64), cy);
 		m_hitRects.push_back({wxRect((int)chipX, (int)(cy - chipH / 2), (int)chipW, (int)chipH), kHitSettingsChip});
 
@@ -1242,8 +1544,7 @@ void GameModePanel::DrawHints(wxGraphicsContext* gc, const wxRect& area)
 		const double labelW = TextWidth(gc, label);
 		const double itemW = S(44) + S(12) + labelW;
 		const double itemX = x - itemW;
-		const wxString letter = it->first == Nav::Accept ? "A" : it->first == Nav::Back ? "B" : it->first == Nav::Options ? "X" : "Y";
-		DrawGlyph(gc, letter, itemX + S(22), cy, S(22));
+		DrawGlyph(gc, it->first, itemX + S(22), cy, S(22));
 		gc->SetFont(MakeFont(S(26)), kOnSurface);
 		DrawTextV(gc, label, itemX + S(56), cy);
 		m_hitRects.push_back({wxRect((int)itemX, (int)(cy - S(30)), (int)itemW, (int)S(60)), kHintBase - (int)it->first});

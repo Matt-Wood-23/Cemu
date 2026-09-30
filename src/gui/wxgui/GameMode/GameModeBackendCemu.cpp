@@ -12,6 +12,11 @@
 #include "audio/IAudioAPI.h"
 #include "config/CemuConfig.h"
 #include "input/InputManager.h"
+#include "input/api/Controller.h"
+#include "input/emulated/ClassicController.h"
+#include "input/emulated/ProController.h"
+#include "input/emulated/VPADController.h"
+#include "input/emulated/WiimoteController.h"
 #include "util/helpers/helpers.h"
 
 #include <wx/app.h>
@@ -463,34 +468,56 @@ int GameModeBackendCemu::GetPlayerCount()
 	return 4;
 }
 
+// Options: Disabled, [the current setup when it is not a saved profile], saved profiles.
 Choice GameModeBackendCemu::GetPlayerProfile(int player)
 {
 	Choice choice;
 	const auto controller = InputManager::instance().get_controller(player);
-	wxString current;
-	if (!controller)
-		current = _("none");
-	else if (controller->has_profile_name())
-		current = wxString::FromUTF8(controller->get_profile_name());
-	else
-		current = wxString::FromUTF8(std::string(controller->type_string()));
-	choice.options.push_back(wxString::Format(_("Current: %s"), current));
-	for (const auto& profile : CachedProfiles())
+	choice.options.push_back(_("Disabled"));
+	const bool custom = controller && !controller->has_profile_name();
+	if (custom)
+		choice.options.push_back(wxString::Format(_("Custom (%s)"), wxString::FromUTF8(std::string(controller->type_string()))));
+	const auto& profiles = CachedProfiles();
+	for (const auto& profile : profiles)
 		choice.options.push_back(wxString::FromUTF8(profile));
-	choice.selected = 0;
+	if (!controller)
+		choice.selected = 0;
+	else if (custom)
+		choice.selected = 1;
+	else
+	{
+		const auto it = std::find(profiles.begin(), profiles.end(), controller->get_profile_name());
+		choice.selected = it != profiles.end() ? 1 + (int)(it - profiles.begin()) : 0;
+	}
 	return choice;
 }
 
 std::optional<wxString> GameModeBackendCemu::SetPlayerProfile(int player, int choiceIndex)
 {
-	if (choiceIndex <= 0)
+	auto& input = InputManager::instance();
+	const auto controller = input.get_controller(player);
+	if (choiceIndex == 0)
+	{
+		// same as picking "Disabled" in Input settings: also forget the player's saved setup
+		input.delete_controller(player, true);
+		input.save();
+		m_nav.Reset();
 		return std::nullopt;
+	}
+	const bool custom = controller && !controller->has_profile_name();
+	int index = choiceIndex - 1;
+	if (custom)
+	{
+		if (index == 0)
+			return std::nullopt; // kept as it is
+		index--;
+	}
 	const auto profiles = CachedProfiles();
-	if (choiceIndex - 1 >= (int)profiles.size())
+	if (index < 0 || index >= (int)profiles.size())
 		return std::nullopt;
-	if (!InputManager::instance().load(player, profiles[choiceIndex - 1]))
-		return wxString::Format(_("Couldn't load profile %s"), wxString::FromUTF8(profiles[choiceIndex - 1]));
-	InputManager::instance().save();
+	if (!input.load(player, profiles[index]))
+		return wxString::Format(_("Couldn't load profile %s"), wxString::FromUTF8(profiles[index]));
+	input.save();
 	m_nav.Reset(); // the controllers behind this player changed
 	return std::nullopt;
 }
@@ -579,6 +606,301 @@ void GameModeBackendCemu::BindGameMenuKey(int wxKeyCode, bool alt, bool ctrl, bo
 	hotkey.shift = shift;
 	HotkeySettings::SetGameMenuKeyboardHotkey(hotkey);
 	m_captureBaseline.clear();
+}
+
+// ---- remapper ----
+
+namespace
+{
+	constexpr EmulatedController::Type kTypes[] = {EmulatedController::VPAD, EmulatedController::Pro, EmulatedController::Classic, EmulatedController::Wiimote};
+
+	wxString TypeName(EmulatedController::Type type)
+	{
+		switch (type)
+		{
+		case EmulatedController::VPAD: return _("Wii U GamePad");
+		case EmulatedController::Pro: return _("Wii U Pro Controller");
+		case EmulatedController::Classic: return _("Classic Controller");
+		case EmulatedController::Wiimote: return _("Wii Remote");
+		default: return wxString();
+		}
+	}
+
+	std::string_view MappingName(EmulatedController::Type type, uint64 id)
+	{
+		switch (type)
+		{
+		case EmulatedController::VPAD: return VPADController::get_button_name((VPADController::ButtonId)id);
+		case EmulatedController::Pro: return ProController::get_button_name((ProController::ButtonId)id);
+		case EmulatedController::Classic: return ClassicController::get_button_name((ClassicController::ButtonId)id);
+		case EmulatedController::Wiimote: return WiimoteController::get_button_name((WiimoteController::ButtonId)id);
+		default: return {};
+		}
+	}
+}
+
+void GameModeBackendCemu::SavePlayer(int player)
+{
+	InputManager::instance().save();
+	m_profilesCache.until = {};
+	m_nav.Reset();
+}
+
+Choice GameModeBackendCemu::GetPlayerControllerType(int player)
+{
+	Choice choice;
+	const auto controller = InputManager::instance().get_controller(player);
+	if (!controller)
+		return choice;
+	for (size_t i = 0; i < std::size(kTypes); i++)
+	{
+		choice.options.push_back(TypeName(kTypes[i]));
+		if (kTypes[i] == controller->type())
+			choice.selected = (int)i;
+	}
+	return choice;
+}
+
+// Mirrors Input settings: switching the type keeps the player's devices and gives them the
+// default mapping of the new type.
+std::optional<wxString> GameModeBackendCemu::SetPlayerControllerType(int player, int index)
+{
+	if (index < 0 || index >= (int)std::size(kTypes))
+		return std::nullopt;
+	auto& input = InputManager::instance();
+	const auto old = input.get_controller(player);
+	if (old && old->type() == kTypes[index])
+		return std::nullopt;
+	std::vector<std::shared_ptr<ControllerBase>> devices;
+	if (old)
+		devices = old->get_controllers();
+	try
+	{
+		const auto controller = input.set_controller(player, kTypes[index]);
+		if (!controller)
+			return _("This controller type is not available for this player");
+		if (controller->get_controllers().empty())
+		{
+			for (const auto& device : devices)
+				controller->add_controller(device);
+		}
+		for (const auto& device : controller->get_controllers())
+			controller->set_default_mapping(device);
+	}
+	catch (const std::exception& e)
+	{
+		// e.g. only two GamePads can be connected
+		return wxString::FromUTF8(e.what());
+	}
+	SavePlayer(player);
+	return std::nullopt;
+}
+
+void GameModeBackendCemu::RefreshDevices()
+{
+	m_devices.clear();
+	auto& input = InputManager::instance();
+	// gamepads only: keyboard mapping needs key events the launcher consumes, and scanning for
+	// Wii Remotes or DSU servers can block
+	for (const auto api : {InputAPI::SDLController, InputAPI::XInput, InputAPI::WGIGamepad})
+	{
+		for (const auto& provider : input.get_api_providers()[api])
+		{
+			for (const auto& device : provider->get_controllers())
+				m_devices.push_back(device);
+		}
+	}
+}
+
+Choice GameModeBackendCemu::GetPlayerDevice(int player)
+{
+	Choice choice;
+	const auto controller = InputManager::instance().get_controller(player);
+	std::shared_ptr<ControllerBase> current;
+	if (controller && !controller->get_controllers().empty())
+		current = controller->get_controllers().front();
+	for (size_t i = 0; i < m_devices.size(); i++)
+	{
+		const auto& device = m_devices[i];
+		choice.options.push_back(wxString::FromUTF8(device->display_name()) + " (" + wxString::FromUTF8(std::string(device->api_name())) + ")");
+		if (current && current->api() == device->api() && current->uuid() == device->uuid())
+			choice.selected = (int)i;
+	}
+	// a device that is set up but not connected, or a keyboard, still shows as the current one
+	if (current && (m_devices.empty() || choice.options.size() == m_devices.size()) && std::none_of(m_devices.begin(), m_devices.end(), [&](const auto& d) { return d->api() == current->api() && d->uuid() == current->uuid(); }))
+	{
+		choice.options.insert(choice.options.begin(), wxString::FromUTF8(current->display_name()) + " (" + wxString::FromUTF8(std::string(current->api_name())) + ")");
+		choice.selected = 0;
+	}
+	if (choice.options.empty())
+		choice.options.push_back(_("No controller found"));
+	return choice;
+}
+
+std::optional<wxString> GameModeBackendCemu::SetPlayerDevice(int player, int index)
+{
+	const auto controller = InputManager::instance().get_controller(player);
+	if (!controller)
+		return _("Pick a profile or controller type first");
+	// index may be shifted by the "current device" entry GetPlayerDevice inserted
+	const auto choice = GetPlayerDevice(player);
+	if (index < 0 || index >= (int)choice.options.size())
+		return std::nullopt;
+	const int offset = (int)choice.options.size() - (int)m_devices.size();
+	const int deviceIndex = index - offset;
+	if (deviceIndex < 0 || deviceIndex >= (int)m_devices.size())
+		return std::nullopt; // the current device, unchanged
+	const auto& device = m_devices[deviceIndex];
+	device->connect();
+	controller->clear_controllers();
+	controller->add_controller(device);
+	controller->set_default_mapping(device);
+	SavePlayer(player);
+	return std::nullopt;
+}
+
+std::vector<GameMode::MappingEntry> GameModeBackendCemu::GetMappings(int player)
+{
+	std::vector<GameMode::MappingEntry> entries;
+	const auto controller = InputManager::instance().get_controller(player);
+	if (!controller)
+		return entries;
+	for (uint64 id = 1; id < controller->get_highest_mapping_id(); id++)
+	{
+		const auto name = MappingName(controller->type(), id);
+		if (name.empty())
+			continue;
+		entries.push_back({id, wxString::FromUTF8(std::string(name)), wxString::FromUTF8(controller->get_mapping_name(id))});
+	}
+	return entries;
+}
+
+void GameModeBackendCemu::ClearMapping(int player, uint64_t mapping)
+{
+	if (const auto controller = InputManager::instance().get_controller(player))
+	{
+		controller->delete_mapping(mapping);
+		SavePlayer(player);
+	}
+}
+
+void GameModeBackendCemu::ResetMappings(int player)
+{
+	const auto controller = InputManager::instance().get_controller(player);
+	if (!controller)
+		return;
+	controller->clear_mappings();
+	for (const auto& device : controller->get_controllers())
+		controller->set_default_mapping(device);
+	SavePlayer(player);
+}
+
+void GameModeBackendCemu::BeginMappingCapture(int player, uint64_t mapping)
+{
+	m_capturePlayer = player;
+	m_captureMapping = mapping;
+	m_captureWasIdle = false; // wait for everything to be let go first (the A that opened this)
+}
+
+// Same rules as the Input settings panel: one direction per stick, and analog inputs have to be
+// pushed at least a third of the way.
+bool GameModeBackendCemu::PollMappingCapture()
+{
+	const auto controller = InputManager::instance().get_controller(m_capturePlayer);
+	if (!controller)
+		return false;
+	bool allIdle = true;
+	for (const auto& device : controller->get_controllers())
+	{
+		const auto& state = device->update_state();
+		if (state.buttons.IsIdle())
+			continue;
+		allIdle = false;
+		if (!m_captureWasIdle)
+			continue;
+		for (const auto id : state.buttons.GetButtonList())
+		{
+			auto dominated = [&](uint64 a, uint64 b, float av, float bv) {
+				return (id == a || id == b) && std::abs(bv) > std::abs(av);
+			};
+			if (device->has_axis())
+			{
+				if ((id == kAxisXP || id == kAxisXN) && std::abs(state.axis.y) > std::abs(state.axis.x)) continue;
+				if ((id == kAxisYP || id == kAxisYN) && std::abs(state.axis.x) > std::abs(state.axis.y)) continue;
+				if ((id == kRotationXP || id == kRotationXN) && std::abs(state.rotation.y) > std::abs(state.rotation.x)) continue;
+				if ((id == kRotationYP || id == kRotationYN) && std::abs(state.rotation.x) > std::abs(state.rotation.y)) continue;
+				if (dominated(kTriggerXP, kTriggerXN, state.trigger.x, state.trigger.y)) continue;
+				if (dominated(kTriggerYP, kTriggerYN, state.trigger.y, state.trigger.x)) continue;
+				if (id >= kButtonAxisStart && device->get_axis_value(id) < 0.33f)
+					continue;
+			}
+			controller->set_mapping(m_captureMapping, device, id);
+			SavePlayer(m_capturePlayer);
+			m_capturePlayer = -1;
+			return true;
+		}
+	}
+	if (allIdle)
+		m_captureWasIdle = true;
+	return false;
+}
+
+std::vector<wxString> GameModeBackendCemu::GetProfileNames()
+{
+	std::vector<wxString> names;
+	for (const auto& profile : CachedProfiles())
+		names.push_back(wxString::FromUTF8(profile));
+	return names;
+}
+
+std::optional<wxString> GameModeBackendCemu::SaveProfile(int player, const wxString& name)
+{
+	const std::string utf8 = name.utf8_string();
+	if (!InputManager::is_valid_profilename(utf8))
+		return wxString::Format(_("Invalid profile name: %s"), name);
+	if (!InputManager::instance().save(player, utf8))
+		return _("Couldn't save the profile");
+	// make the player use the profile it was just saved as
+	InputManager::instance().load(player, utf8);
+	SavePlayer(player);
+	return std::nullopt;
+}
+
+void GameModeBackendCemu::ResetGameMenuBinding()
+{
+	uKeyboardHotkey key{};
+	key.key = WXK_F10;
+	HotkeySettings::SetGameMenuKeyboardHotkey(key);
+	HotkeySettings::SetGameMenuControllerHotkey(5); // Guide
+}
+
+// ---- Game Mode preferences ----
+
+bool GameModeBackendCemu::GetAlwaysBootGameMode()
+{
+	return GetWxGUIConfig().game_mode_boot;
+}
+
+void GameModeBackendCemu::SetAlwaysBootGameMode(bool enabled)
+{
+	GetWxGUIConfig().game_mode_boot = enabled;
+	SaveGuiConfig();
+}
+
+GameMode::ButtonStyle GameModeBackendCemu::GetButtonStyle()
+{
+	return GameMode::GetButtonStyle();
+}
+
+void GameModeBackendCemu::SetButtonStyle(GameMode::ButtonStyle style)
+{
+	GetWxGUIConfig().game_mode_buttons = (sint32)style;
+	SaveGuiConfig();
+}
+
+GameMode::Face GameModeBackendCemu::GetNavFace(GameMode::Nav nav)
+{
+	return GameMode::FaceForNav(nav);
 }
 
 // ---- navigation ----

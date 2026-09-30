@@ -68,6 +68,9 @@ private:
 		std::function<void()> action;
 		// Right-hand text for Action/Link rows
 		std::function<wxString()> getValueText;
+		// X on this row (shown in the hints when set)
+		std::function<void()> onOptions;
+		wxString optionsLabel;
 
 		bool Focusable() const { return kind != RowKind::Header && kind != RowKind::Info; }
 		bool Enabled() const { return !isEnabled || isEnabled(); }
@@ -94,6 +97,11 @@ private:
 		int focus = 0;
 		std::function<void(int)> onChoose; // Choice: option index. Confirm: 1 = yes.
 		wxLongLong startedMs = 0;
+		// Capture: polled every frame until it returns true; onKey gets key presses (wx key code,
+		// alt, ctrl, shift) and returns true when the key ended the capture.
+		std::function<bool()> poll;
+		std::function<bool(int, bool, bool, bool)> onKey;
+		std::function<void()> onDone;
 	};
 
 	struct HitRect
@@ -123,10 +131,13 @@ private:
 	Page MakeGraphicsPage();
 	Page MakeAudioPage();
 	Page MakeInputPage();
+	Page MakePlayerPage(int player);
 
 	void OpenChoiceDialog(const wxString& title, const GameMode::Choice& choice, std::function<void(int)> onChoose);
 	void OpenConfirmDialog(const wxString& title, const wxString& message, std::function<void()> onYes);
 	void StartGameMenuCapture();
+	void StartCapture(const wxString& title, const wxString& message, std::function<bool()> poll,
+		std::function<bool(int, bool, bool, bool)> onKey, std::function<void()> onDone);
 	void ShowToast(const wxString& message);
 
 	// drawing
@@ -140,7 +151,8 @@ private:
 	void DrawDialog(wxGraphicsContext* gc, const wxRect& area);
 	void DrawToast(wxGraphicsContext* gc, const wxRect& area);
 	void DrawIcon(wxGraphicsContext* gc, uint64_t titleId, const wxString& name, const wxRect& rect, double radius);
-	void DrawGlyph(wxGraphicsContext* gc, const wxString& letter, double cx, double cy, double radius);
+	// the button behind a menu action, drawn in the chosen style (Nintendo, Xbox, PlayStation, Deck)
+	void DrawGlyph(wxGraphicsContext* gc, GameMode::Nav nav, double cx, double cy, double radius);
 	wxBitmap GetScaledIcon(uint64_t titleId, int size);
 	int LibraryColumns(int width) const;
 	double RowHeight(const Row& row) const;

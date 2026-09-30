@@ -33,6 +33,15 @@ namespace GameMode
 	// "Fit (keep aspect ratio)", "Stretch", ... for a FullscreenScaling value
 	wxString ScreenLayoutName(int layout);
 
+	// Button hints: the chosen glyph family, and which physical face button a menu action is on
+	// according to player 1's mapping (Cemu's default SDL mapping is positional, so Wii U A is the
+	// east button). Falls back to that positional layout when the mapping is not a gamepad button.
+	ButtonStyle GetButtonStyle();
+	wxString ButtonStyleName(ButtonStyle style);
+	Face FaceForNav(Nav nav);
+	// label printed on a face button: "A", "B", ... (PlayStation shapes are drawn, not printed)
+	wxString FaceLetter(ButtonStyle style, Face face);
+
 	// Menu navigation read from the players' emulated controllers, so every player's own button
 	// mapping applies ("A" is whatever they press for A in games). Directions repeat when held.
 	class ControllerNav

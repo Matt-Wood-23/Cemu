@@ -64,6 +64,26 @@ public:
 	bool PollGameMenuCapture() override;
 	void BindGameMenuKey(int wxKeyCode, bool alt, bool ctrl, bool shift) override;
 
+	GameMode::Choice GetPlayerControllerType(int player) override;
+	std::optional<wxString> SetPlayerControllerType(int player, int index) override;
+	GameMode::Choice GetPlayerDevice(int player) override;
+	std::optional<wxString> SetPlayerDevice(int player, int index) override;
+	void RefreshDevices() override;
+	std::vector<GameMode::MappingEntry> GetMappings(int player) override;
+	void ClearMapping(int player, uint64_t mapping) override;
+	void ResetMappings(int player) override;
+	void BeginMappingCapture(int player, uint64_t mapping) override;
+	bool PollMappingCapture() override;
+	std::vector<wxString> GetProfileNames() override;
+	std::optional<wxString> SaveProfile(int player, const wxString& name) override;
+	void ResetGameMenuBinding() override;
+
+	bool GetAlwaysBootGameMode() override;
+	void SetAlwaysBootGameMode(bool enabled) override;
+	GameMode::ButtonStyle GetButtonStyle() override;
+	void SetButtonStyle(GameMode::ButtonStyle style) override;
+	GameMode::Face GetNavFace(GameMode::Nav nav) override;
+
 	void PollControllerNav(std::vector<GameMode::Nav>& out) override;
 	void ExitGameMode() override;
 
@@ -99,6 +119,13 @@ private:
 
 	// captured button states when a Game Menu rebind started
 	std::vector<std::pair<std::weak_ptr<ControllerBase>, std::vector<uint64>>> m_captureBaseline;
+
+	// remapper
+	std::vector<std::shared_ptr<ControllerBase>> m_devices; // connected controllers, from RefreshDevices
+	int m_capturePlayer = -1;
+	uint64_t m_captureMapping = 0;
+	bool m_captureWasIdle = false;
+	void SavePlayer(int player);
 
 	// icon loading
 	std::thread m_iconThread;

@@ -80,6 +80,8 @@ namespace GameMode
 			sint32 layout = -1; // -1: the global setting
 			ControllerNav nav;
 			ImVec2 lastMouse{-1, -1};
+			Face acceptFace = Face::East;
+			Face backFace = Face::South;
 		};
 
 		MenuState s_state;
@@ -419,14 +421,57 @@ namespace GameMode
 			const auto it = textures.find(st.titleId);
 			st.texturesEnabled = it == textures.end() || it->second.enabled;
 			st.nav.Reset(); // the button that opened the menu must not also select something
+			st.acceptFace = FaceForNav(Nav::Accept);
+			st.backFace = FaceForNav(Nav::Back);
 		}
 
-		void DrawGlyph(ImDrawList* dl, const char* letter, ImVec2 centre, float radius)
+		// Same glyph families as the launcher (see GameModePanel::DrawGlyph).
+		void DrawGlyph(ImDrawList* dl, Nav nav, ImVec2 c, float radius)
 		{
-			dl->AddCircleFilled(centre, radius, kOnSurface, 24);
+			const ButtonStyle style = GetButtonStyle();
+			const Face face = nav == Nav::Accept ? s_state.acceptFace : s_state.backFace;
+			const ImU32 darkFill = kSurfaceHighest;
+			if (style == ButtonStyle::PlayStation)
+			{
+				dl->AddCircleFilled(c, radius, darkFill, 24);
+				dl->AddCircle(c, radius, kOutline, 24, radius * 0.08f);
+				const float r = radius * 0.46f, w = std::max(1.5f, radius * 0.16f);
+				switch (face)
+				{
+				case Face::South:
+					dl->AddLine(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), IM_COL32(0x7C, 0xB2, 0xE8, 0xFF), w);
+					dl->AddLine(ImVec2(c.x + r, c.y - r), ImVec2(c.x - r, c.y + r), IM_COL32(0x7C, 0xB2, 0xE8, 0xFF), w);
+					break;
+				case Face::East:
+					dl->AddCircle(c, r, IM_COL32(0xFF, 0x6B, 0x6B, 0xFF), 24, w);
+					break;
+				case Face::West:
+					dl->AddRect(ImVec2(c.x - r * 0.9f, c.y - r * 0.9f), ImVec2(c.x + r * 0.9f, c.y + r * 0.9f), IM_COL32(0xE0, 0x9E, 0xE0, 0xFF), 0, 0, w);
+					break;
+				default:
+					dl->AddTriangle(ImVec2(c.x, c.y - r), ImVec2(c.x + r * 1.05f, c.y + r * 0.75f), ImVec2(c.x - r * 1.05f, c.y + r * 0.75f), IM_COL32(0x4C, 0xD9, 0xA6, 0xFF), w);
+					break;
+				}
+				return;
+			}
+			ImU32 fill = kOnSurface, text = kGlyphText;
+			if (style == ButtonStyle::Xbox)
+			{
+				fill = face == Face::South ? IM_COL32(0x6C, 0xC0, 0x4A, 0xFF) : face == Face::East ? IM_COL32(0xE8, 0x5A, 0x4F, 0xFF)
+					: face == Face::West ? IM_COL32(0x4A, 0x9C, 0xE8, 0xFF) : IM_COL32(0xF2, 0xC6, 0x3C, 0xFF);
+			}
+			else if (style == ButtonStyle::SteamDeck)
+			{
+				fill = darkFill;
+				text = kOnSurface;
+			}
+			dl->AddCircleFilled(c, radius, fill, 24);
+			if (style == ButtonStyle::SteamDeck)
+				dl->AddCircle(c, radius, kOutline, 24, radius * 0.08f);
+			const std::string letter = U8(FaceLetter(style, face));
 			const float size = radius * 1.15f;
 			const ImVec2 ts = TextSize(size, letter);
-			Text(dl, size, ImVec2(centre.x - ts.x / 2, centre.y - ts.y / 2), kGlyphText, letter);
+			Text(dl, size, ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), text, letter);
 		}
 
 		void DrawChevron(ImDrawList* dl, float cx, float cy, float size, ImU32 colour, float thickness)
@@ -600,7 +645,7 @@ namespace GameMode
 			// button hints
 			const float hy = H - 56 * s;
 			float hx = padX;
-			const std::pair<const char*, std::string> hints[] = {{"A", U8(_("Select"))}, {"B", st.page == Page::Main ? U8(_("Resume")) : U8(_("Back"))}};
+			const std::pair<Nav, std::string> hints[] = {{Nav::Accept, U8(_("Select"))}, {Nav::Back, st.page == Page::Main ? U8(_("Resume")) : U8(_("Back"))}};
 			for (const auto& [glyph, label] : hints)
 			{
 				DrawGlyph(dl, glyph, ImVec2(hx + 20 * s, hy), 20 * s);

@@ -81,6 +81,8 @@ struct wxCemuConfig
 	ConfigValue<bool> fullscreen{ false };
 	ConfigValue<bool> fullscreen_menubar{false};
 	ConfigValue<bool> game_mode{false}; // View > Game Mode
+	ConfigValue<bool> game_mode_boot{false}; // start in Game Mode even after leaving it
+	ConfigValue<sint32> game_mode_buttons{0}; // GameMode::ButtonStyle of the button hints
 	ConfigValue<bool> feral_gamemode{false};
 
 	// max 15 entries

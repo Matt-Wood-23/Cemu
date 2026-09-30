@@ -128,6 +128,7 @@ enum
 	MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 = 20840,     // default for all games
 	MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST = MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 + 31,
 	MAINFRAME_MENU_ID_VIEW_GAME_MODE = 20880,
+	MAINFRAME_MENU_ID_VIEW_GAME_MODE_BOOT = 20881,
 	// cpu
 	// cpu->timer speed
 	MAINFRAME_MENU_ID_TIMER_SPEED_1X = 20700,
@@ -216,6 +217,7 @@ EVT_MENU(MAINFRAME_MENU_ID_TOOLS_CHEATS, MainWindow::OnToolsInput)
 // view menu
 EVT_MENU(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_DEFAULT, MainWindow::OnScreenLayoutMenu)
 EVT_MENU(MAINFRAME_MENU_ID_VIEW_GAME_MODE, MainWindow::OnScreenLayoutMenu)
+EVT_MENU(MAINFRAME_MENU_ID_VIEW_GAME_MODE_BOOT, MainWindow::OnScreenLayoutMenu)
 EVT_MENU_RANGE(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0, MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_LAST, MainWindow::OnScreenLayoutMenu)
 EVT_MENU_RANGE(MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0, MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST, MainWindow::OnScreenLayoutMenu)
 // cpu menu
@@ -325,6 +327,9 @@ MainWindow::MainWindow()
 	CafeSystem::SetImplementation(this);
 
 	ApplyCustomTextureSettings();
+	// "Always boot to Game Mode": start in it even if it was left last time
+	if (GetWxGUIConfig().game_mode_boot)
+		GetWxGUIConfig().game_mode = true;
 	RecreateMenu();
 	SetClientSize(1280, 720);
 	SetIcon(wxICON(M_WND_ICON128));
@@ -756,6 +761,12 @@ void MainWindow::OnScreenLayoutMenu(wxCommandEvent& event)
 	if (id == MAINFRAME_MENU_ID_VIEW_GAME_MODE)
 	{
 		CallAfter([this]() { SetGameModeEnabled(!IsGameModeEnabled()); });
+		return;
+	}
+	if (id == MAINFRAME_MENU_ID_VIEW_GAME_MODE_BOOT)
+	{
+		GetWxGUIConfig().game_mode_boot = event.IsChecked();
+		g_wxConfig.Save();
 		return;
 	}
 	if (id >= MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 && id <= MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST)
@@ -2479,6 +2490,7 @@ void MainWindow::RecreateMenu()
 		viewMenu->AppendSubMenu(layoutMenu, _("&Screen Layout"));
 		viewMenu->AppendSeparator();
 		viewMenu->AppendCheckItem(MAINFRAME_MENU_ID_VIEW_GAME_MODE, _("&Game Mode"))->Check(GetWxGUIConfig().game_mode);
+		viewMenu->AppendCheckItem(MAINFRAME_MENU_ID_VIEW_GAME_MODE_BOOT, _("&Always Boot to Game Mode"))->Check(GetWxGUIConfig().game_mode_boot);
 	}
 	m_menuBar->Append(viewMenu, _("&View"));
 
