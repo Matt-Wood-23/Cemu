@@ -13,6 +13,7 @@
 #include "wxgui/components/wxGameList.h"
 
 #include <future>
+#include <set>
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/CafeSystem.h"
 
@@ -76,6 +77,12 @@ public:
 	void UpdateNFCMenu();
 	bool IsMenuHidden() const;
 	void TogglePadView();
+
+	// Game Mode (View > Game Mode): the controller-first launcher replaces the game list and
+	// the menu bar is hidden. Leaving it is only offered from the launcher, i.e. with no game running.
+	bool IsGameModeEnabled() const;
+	void SetGameModeEnabled(bool enabled);
+	void ApplyGameModeFullscreen(bool fullscreen);
 
 #if BOOST_OS_WINDOWS
 	WXLRESULT MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam) override;
@@ -201,6 +208,8 @@ private:
 
 	// panels
 	wxPanel* m_main_panel{}, * m_game_panel{};
+	class GameModePanel* m_gameModePanel{};
+	std::set<int> m_gameMenuKeysDown; // keys pressed while the Game Menu was open (their key-up is swallowed)
 
 	// rendering
 	wxWindow* m_render_canvas{};

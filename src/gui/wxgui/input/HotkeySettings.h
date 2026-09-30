@@ -14,6 +14,11 @@ public:
 	static void CaptureInput(wxKeyEvent& event);
 	static void CaptureInput(const ControllerState& currentState, const ControllerState& lastState);
 
+	// Game Menu binding, also changed from Game Mode's Input settings. Saves the config.
+	static void SetGameMenuKeyboardHotkey(uKeyboardHotkey hotkey);
+	static void SetGameMenuControllerHotkey(ControllerHotkey_t button);
+	static wxString KeyboardHotkeyLabel(uKeyboardHotkey hotkey);
+
 	HotkeySettings(wxWindow* parent);
 	~HotkeySettings();
 

@@ -52,6 +52,14 @@ add_library(CemuWxGui STATIC
   DownloadGraphicPacksWindow.h
   DownloadCustomGraphicPackWindow.cpp
   DownloadCustomGraphicPackWindow.h
+  GameMode/GameMenuOverlay.cpp
+  GameMode/GameMode.cpp
+  GameMode/GameMode.h
+  GameMode/GameModeBackend.h
+  GameMode/GameModeBackendCemu.cpp
+  GameMode/GameModeBackendCemu.h
+  GameMode/GameModePanel.cpp
+  GameMode/GameModePanel.h
   GameProfileWindow.cpp
   GameProfileWindow.h
   GameUpdateWindow.cpp
@@ -163,6 +171,7 @@ target_link_libraries(CemuWxGui PRIVATE
   CemuComponents
   pugixml::pugixml
   CemuCafe
+  imguiImpl # Game Mode's in-game menu is drawn with ImGui
   PUBLIC
   CURL::libcurl
 )

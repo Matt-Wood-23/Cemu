@@ -4,6 +4,7 @@
 #include "input/emulated/ClassicController.h"
 #include "input/emulated/ProController.h"
 #include "input/emulated/WiimoteController.h"
+#include "WindowSystem.h"
 
 WPADController::WPADController(size_t player_index, WPADDataFormat data_format)
 	: EmulatedController(player_index), m_data_format(data_format)
@@ -201,6 +202,8 @@ void WPADController::KPADRead(KPADStatus_t& status, const BtnRepeat& repeat)
 	}
 
 	controllers_update_states();
+	if (WindowSystem::IsGameInputBlocked())
+		return; // Game Menu open: the caller hands the game an empty sample
 	for (uint32 i = 1; i < get_highest_mapping_id(); ++i)
 	{
 		if (is_mapping_down(i))

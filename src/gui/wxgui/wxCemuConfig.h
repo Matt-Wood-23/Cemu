@@ -80,6 +80,7 @@ struct wxCemuConfig
 	ConfigValue<bool> use_discord_presence{true};
 	ConfigValue<bool> fullscreen{ false };
 	ConfigValue<bool> fullscreen_menubar{false};
+	ConfigValue<bool> game_mode{false}; // View > Game Mode
 	ConfigValue<bool> feral_gamemode{false};
 
 	// max 15 entries
@@ -143,6 +144,9 @@ struct wxCemuConfig
 		sHotkeyCfg reloadTextures;
 		sHotkeyCfg toggleFastForward;
 		sHotkeyCfg exitApplication;
+		// Opens the Game Menu over the running game. Unlike the other controller hotkeys it does
+		// not need the modifier button held, so a single Guide press works.
+		sHotkeyCfg gameMenu;
 #ifdef CEMU_DEBUG_ASSERT
 		sHotkeyCfg endEmulation;
 #endif

@@ -176,7 +176,8 @@ void padscoreExport_WPADRead(PPCInterpreter_t* hCPU)
 	{
 		if(const auto controller = InputManager::instance().get_wpad_controller(channel) )
 		{
-			controller->WPADRead(wpadStatus);
+			if (!WindowSystem::IsGameInputBlocked())
+				controller->WPADRead(wpadStatus);
 		}
 	}
 	else
@@ -474,6 +475,15 @@ sint32 _KPADRead(uint32 channel, KPADStatus_t* samplingBufs, uint32 length, bety
 	{
 		const auto btn_repeat = padscore::g_padscore.controller_data[channel].btn_repeat;
 		controller->KPADRead(*samplingBufs, btn_repeat);
+		// Game Menu open: keep the (already cleared) buffer. The read above still polls the
+		// controllers so the menu's own button handling sees them.
+		if (WindowSystem::IsGameInputBlocked())
+		{
+			memset(samplingBufs, 0x00, sizeof(KPADStatus_t));
+			samplingBufs->wpadErr = WPAD_ERR_NONE;
+			samplingBufs->data_format = controller->get_data_format();
+			samplingBufs->devType = controller->get_device_type();
+		}
 	}
 
 	if (errResult)

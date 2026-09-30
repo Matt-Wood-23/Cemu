@@ -49,6 +49,29 @@ enum ControllerVPADMapping2 : uint32
 void VPADController::VPADRead(VPADStatus_t& status, const BtnRepeat& repeat)
 {
 	controllers_update_states();
+	if (WindowSystem::IsGameInputBlocked())
+	{
+		// The Game Menu has the controls: report a pad at rest. Checked after polling so the
+		// press that opens the menu (e.g. a Guide button also mapped to HOME) is already blocked.
+		status.hold = 0;
+		status.trig = 0;
+		status.release = m_last_holdvalue;
+		m_last_holdvalue = 0;
+		m_homebutton_down = false;
+		status.leftStick.x = 0.0f;
+		status.leftStick.y = 0.0f;
+		status.rightStick.x = 0.0f;
+		status.rightStick.y = 0.0f;
+		status.tpData.touch = kTpTouchOff;
+		status.tpData.validity = kTpInvalid;
+		status.tpData.x = (uint16)m_last_touch_position.x;
+		status.tpData.y = (uint16)m_last_touch_position.y;
+		status.dir.x = {1, 0, 0};
+		status.dir.y = {0, 1, 0};
+		status.dir.z = {0, 0, 1};
+		status.accXY = {1.0f, 0.0f};
+		return;
+	}
 	m_mic_active = false;
 	m_screen_active = false;
 	for (uint32 i = kButtonId_A; i < kButtonId_Max; ++i)

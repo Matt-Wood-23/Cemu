@@ -115,6 +115,11 @@ namespace WindowSystem
 
 	bool InputConfigWindowHasFocus();
 
+	// Game Mode's in-game menu. While it is open (and until its buttons are released) the game's
+	// pad reads return nothing; the menu is drawn from the overlay pass of each window.
+	bool IsGameInputBlocked();
+	void RenderGameMenu(bool mainWindow);
+
 	void NotifyGameLoaded();
 	void NotifyGameExited();
 

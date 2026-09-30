@@ -6,6 +6,7 @@
 #include "input/InputManager.h"
 #include "HotkeySettings.h"
 #include "MainWindow.h"
+#include "wxgui/GameMode/GameMode.h"
 
 #include <wx/app.h>
 #include <wx/clipbrd.h>
@@ -160,6 +161,7 @@ HotkeySettings::HotkeySettings(wxWindow* parent)
 	CreateHotkeyRow(_tr("Take screenshot"), s_cfgHotkeys.takeScreenshot);
 	CreateHotkeyRow(_tr("Reload textures"), s_cfgHotkeys.reloadTextures);
 	CreateHotkeyRow(_tr("Toggle fast-forward"), s_cfgHotkeys.toggleFastForward);
+	CreateHotkeyRow(_tr("Game Menu (no modifier needed)"), s_cfgHotkeys.gameMenu);
 #ifdef CEMU_DEBUG_ASSERT
 	CreateHotkeyRow(_tr("End emulation"), s_cfgHotkeys.endEmulation);
 #endif
@@ -202,6 +204,9 @@ void HotkeySettings::Init(MainWindow* mainWindowFrame)
 		{&s_cfgHotkeys.toggleFastForward, [](void) {
 			 ActiveSettings::SetTimerShiftFactor((ActiveSettings::GetTimerShiftFactor() < 3) ? 3 : 1);
 		 }},
+		{&s_cfgHotkeys.gameMenu, [](void) {
+			 GameMode::ToggleMenu();
+		 }},
 		{&s_cfgHotkeys.exitApplication, [](void) {
 			auto closeEvent = new wxCloseEvent{wxEVT_CLOSE_WINDOW, s_mainWindow->GetId()};
 			closeEvent->SetCanVeto(false);
@@ -225,7 +230,8 @@ void HotkeySettings::Init(MainWindow* mainWindowFrame)
 			s_keyboardHotkeyToFuncMap[keyboardHotkey] = func;
 		}
 		auto controllerHotkey = cfgHotkey->controller;
-		if (controllerHotkey > sHotkeyCfg::controllerNone)
+		// the Game Menu button is checked on its own in CaptureInput (no modifier needed)
+		if (controllerHotkey > sHotkeyCfg::controllerNone && cfgHotkey != &s_cfgHotkeys.gameMenu)
 		{
 			s_controllerHotkeyToFuncMap[controllerHotkey] = func;
 		}
@@ -297,14 +303,16 @@ void HotkeySettings::OnControllerTimer(wxTimerEvent& event)
 			auto& cfgHotkey = *static_cast<sHotkeyCfg*>(inputButton->GetClientData());
 			const auto oldHotkey = cfgHotkey.controller;
 			const bool isModifier = (&cfgHotkey == &s_cfgHotkeys.modifiers);
+			const bool isGameMenu = (&cfgHotkey == &s_cfgHotkeys.gameMenu);
 			/* ignore same hotkeys and block duplicate hotkeys */
 			if ((newHotkey != oldHotkey) && (isModifier || (newHotkey != s_cfgHotkeys.modifiers.controller)) &&
+				(isGameMenu || newHotkey != s_cfgHotkeys.gameMenu.controller) &&
 				(s_controllerHotkeyToFuncMap.find(newHotkey) == s_controllerHotkeyToFuncMap.end()))
 			{
 				m_needToSave |= true;
 				cfgHotkey.controller = newHotkey;
-				/* don't bind modifier to map */
-				if (!isModifier)
+				/* don't bind modifier or the Game Menu button to the map */
+				if (!isModifier && !isGameMenu)
 				{
 					s_controllerHotkeyToFuncMap.erase(oldHotkey);
 					s_controllerHotkeyToFuncMap[newHotkey] = s_cfgHotkeyToFuncMap.at(&cfgHotkey);
@@ -470,6 +478,13 @@ wxString HotkeySettings::To_wxString(uKeyboardHotkey hotkey)
 	if (hotkey.raw == sHotkeyCfg::keyboardNone) {
 		return m_disabledHotkeyText;
 	}
+	return KeyboardHotkeyLabel(hotkey);
+}
+
+wxString HotkeySettings::KeyboardHotkeyLabel(uKeyboardHotkey hotkey)
+{
+	if (hotkey.raw == sHotkeyCfg::keyboardNone)
+		return wxString();
 	wxString ret{};
 	if (hotkey.alt)
 	{
@@ -507,8 +522,46 @@ void HotkeySettings::CaptureInput(wxKeyEvent& event)
 		it->second();
 }
 
+void HotkeySettings::SetGameMenuKeyboardHotkey(uKeyboardHotkey hotkey)
+{
+	auto& cfg = s_cfgHotkeys.gameMenu;
+	if (cfg.keyboard.raw != sHotkeyCfg::keyboardNone)
+		s_keyboardHotkeyToFuncMap.erase(cfg.keyboard.raw);
+	// taking a key from another hotkey unbinds it there
+	for (auto& [otherCfg, func] : s_cfgHotkeyToFuncMap)
+	{
+		if (otherCfg != &cfg && otherCfg->keyboard.raw == hotkey.raw)
+			otherCfg->keyboard.raw = sHotkeyCfg::keyboardNone;
+	}
+	cfg.keyboard = hotkey;
+	s_keyboardHotkeyToFuncMap[hotkey.raw] = s_cfgHotkeyToFuncMap.at(&cfg);
+	g_wxConfig.Save();
+}
+
+void HotkeySettings::SetGameMenuControllerHotkey(ControllerHotkey_t button)
+{
+	for (auto& [otherCfg, func] : s_cfgHotkeyToFuncMap)
+	{
+		if (otherCfg != &s_cfgHotkeys.gameMenu && otherCfg->controller == button)
+		{
+			s_controllerHotkeyToFuncMap.erase(button);
+			otherCfg->controller = sHotkeyCfg::controllerNone;
+		}
+	}
+	s_cfgHotkeys.gameMenu.controller = button;
+	g_wxConfig.Save();
+}
+
 void HotkeySettings::CaptureInput(const ControllerState& currentState, const ControllerState& lastState)
 {
+	// Game Menu: a plain press of its button, no modifier needed
+	const auto gameMenuButton = s_cfgHotkeys.gameMenu.controller;
+	if (gameMenuButton >= 0 && currentState.buttons.GetButtonState(gameMenuButton) && !lastState.buttons.GetButtonState(gameMenuButton))
+	{
+		GameMode::ToggleMenu();
+		return;
+	}
+
 	const auto& modifier = s_cfgHotkeys.modifiers.controller;
 	if ((modifier >= 0) && currentState.buttons.GetButtonState(modifier))
 	{

@@ -29,6 +29,7 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 	msw_theme = parser.get<sint32>("msw_theme", msw_theme);
 	use_discord_presence = parser.get("use_discord_presence", true);
 	fullscreen_menubar = parser.get("fullscreen_menubar", false);
+	game_mode = parser.get("game_mode", false);
 	feral_gamemode = parser.get("feral_gamemode", false);
 	check_update = parser.get("check_update", check_update);
 	receive_untested_updates = parser.get("receive_untested_updates", receive_untested_updates);
@@ -161,6 +162,8 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 	hotkeys.reloadTextures = xml_hotkeys.get("ReloadTextures", sHotkeyCfg{uKeyboardHotkey{WXK_F6}});
 	hotkeys.toggleFastForward = xml_hotkeys.get("ToggleFastForward", sHotkeyCfg{});
 	hotkeys.exitApplication = xml_hotkeys.get("ExitApplication", sHotkeyCfg{});
+	// Guide button (SDL gamepad button 5) and F10
+	hotkeys.gameMenu = xml_hotkeys.get("GameMenu", sHotkeyCfg{uKeyboardHotkey{WXK_F10}, 5});
 #ifdef CEMU_DEBUG_ASSERT
 	hotkeys.endEmulation = xml_hotkeys.get("EndEmulation", sHotkeyCfg{uKeyboardHotkey{WXK_F5}});
 #endif
@@ -173,6 +176,7 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 	config.set<sint32>("msw_theme", msw_theme);
 	config.set<bool>("use_discord_presence", use_discord_presence);
 	config.set<bool>("fullscreen_menubar", fullscreen_menubar);
+	config.set<bool>("game_mode", game_mode);
 	config.set<bool>("feral_gamemode", feral_gamemode);
 	config.set<bool>("check_update", check_update);
 	config.set<bool>("receive_untested_updates", receive_untested_updates);
@@ -255,4 +259,5 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 	xml_hotkeys.set("ReloadTextures", hotkeys.reloadTextures);
 	xml_hotkeys.set("ToggleFastForward", hotkeys.toggleFastForward);
 	xml_hotkeys.set("ExitApplication", hotkeys.exitApplication);
+	xml_hotkeys.set("GameMenu", hotkeys.gameMenu);
 }

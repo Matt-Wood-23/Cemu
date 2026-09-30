@@ -29,6 +29,9 @@
 // settings
 #include "config/CemuConfig.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
+#include "wxgui/GameMode/GameMode.h"
+#include "wxgui/GameMode/GameModePanel.h"
+#include "wxgui/GameMode/GameModeBackendCemu.h"
 #include "config/LaunchSettings.h"
 #include "config/ActiveSettings.h"
 
@@ -124,6 +127,7 @@ enum
 	MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_LAST = MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0 + 31,
 	MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 = 20840,     // default for all games
 	MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST = MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 + 31,
+	MAINFRAME_MENU_ID_VIEW_GAME_MODE = 20880,
 	// cpu
 	// cpu->timer speed
 	MAINFRAME_MENU_ID_TIMER_SPEED_1X = 20700,
@@ -211,6 +215,7 @@ EVT_MENU(MAINFRAME_MENU_ID_TOOLS_EMULATED_USB_DEVICES, MainWindow::OnToolsInput)
 EVT_MENU(MAINFRAME_MENU_ID_TOOLS_CHEATS, MainWindow::OnToolsInput)
 // view menu
 EVT_MENU(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_DEFAULT, MainWindow::OnScreenLayoutMenu)
+EVT_MENU(MAINFRAME_MENU_ID_VIEW_GAME_MODE, MainWindow::OnScreenLayoutMenu)
 EVT_MENU_RANGE(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0, MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_LAST, MainWindow::OnScreenLayoutMenu)
 EVT_MENU_RANGE(MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0, MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST, MainWindow::OnScreenLayoutMenu)
 // cpu menu
@@ -374,6 +379,9 @@ MainWindow::MainWindow()
 
 	m_last_mouse_move_time = std::chrono::steady_clock::now();
 
+	if (GetWxGUIConfig().game_mode && !quick_launch)
+		CallAfter([this]() { ApplyGameModeFullscreen(GetWxGUIConfig().fullscreen); });
+
 	m_timer = new wxTimer(this, MAINFRAME_ID_TIMER1);
 	m_timer->Start(500);
 
@@ -413,6 +421,16 @@ void MainWindow::CreateGameListAndStatusBar()
         return; // already displayed
     m_main_panel = new wxPanel(this);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
+    if (GetWxGUIConfig().game_mode)
+    {
+        // Game Mode launcher in place of the game list
+        m_gameModePanel = new GameModePanel(m_main_panel, std::make_unique<GameModeBackendCemu>(this));
+        sizer->Add(m_gameModePanel, 1, wxEXPAND);
+        m_main_panel->SetSizer(sizer);
+        this->GetSizer()->Add(m_main_panel, 1, wxEXPAND, 0, nullptr);
+        m_gameModePanel->SetFocus();
+        return;
+    }
     // game list
     m_game_list = new wxGameList(m_main_panel, MAINFRAME_GAMELIST_ID);
     m_game_list->Bind(wxEVT_OPEN_SETTINGS, [this](auto&) {OpenSettings(); });
@@ -439,6 +457,7 @@ void MainWindow::DestroyGameListAndStatusBar()
     m_main_panel = nullptr;
     m_game_list = nullptr;
     m_info_bar = nullptr;
+    m_gameModePanel = nullptr;
 }
 
 wxString MainWindow::GetInitialWindowTitle()
@@ -711,18 +730,7 @@ void MainWindow::ApplyCustomTextureSettings()
 
 static wxString _ScreenLayoutName(sint32 layout)
 {
-	switch (layout)
-	{
-	case kKeepAspectRatio: return _("Fit (keep aspect ratio)");
-	case kStretch: return _("Stretch");
-	case kFill: return _("Fill (crop edges)");
-	case kAspect16x9: return _("16:9");
-	case kAspect16x10: return _("16:10");
-	case kAspect4x3: return _("4:3");
-	case kAspect21x9: return _("21:9");
-	case kIntegerScale: return _("Integer scale (pixel-sharp)");
-	default: return _("Fit (keep aspect ratio)");
-	}
+	return GameMode::ScreenLayoutName(layout);
 }
 
 static sint32 _GlobalScreenLayout()
@@ -745,6 +753,11 @@ void MainWindow::ApplyScreenLayoutForRunningTitle()
 void MainWindow::OnScreenLayoutMenu(wxCommandEvent& event)
 {
 	const int id = event.GetId();
+	if (id == MAINFRAME_MENU_ID_VIEW_GAME_MODE)
+	{
+		CallAfter([this]() { SetGameModeEnabled(!IsGameModeEnabled()); });
+		return;
+	}
 	if (id >= MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 && id <= MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST)
 	{
 		GetConfig().fullscreen_scaling = id - MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0;
@@ -764,6 +777,54 @@ void MainWindow::OnScreenLayoutMenu(wxCommandEvent& event)
 	// The "Use default (...)" label depends on the global setting. Rebuild the menu bar after this
 	// handler returns rather than from inside it, since it deletes the menu that sent the event.
 	CallAfter([this]() { RecreateMenu(); });
+}
+
+bool MainWindow::IsGameModeEnabled() const
+{
+	return GetWxGUIConfig().game_mode;
+}
+
+void MainWindow::SetGameModeEnabled(bool enabled)
+{
+	auto& config = GetWxGUIConfig();
+	if (config.game_mode == enabled)
+		return;
+	config.game_mode = enabled;
+	g_wxConfig.Save();
+	if (!m_game_launched)
+	{
+		// swap the game list and the launcher
+		DestroyGameListAndStatusBar();
+		CreateGameListAndStatusBar();
+		GetSizer()->Layout();
+	}
+	// with a game running the launcher appears once it is closed; the menu bar goes now
+	RecreateMenu();
+	if (enabled)
+		ApplyGameModeFullscreen(config.fullscreen);
+	else if (!m_game_launched && IsFullScreen())
+	{
+		g_window_info.is_fullscreen = false;
+		ShowFullScreen(false);
+		SetMenuVisible(true);
+	}
+}
+
+// Game Mode can be fullscreen before a game starts, which SetFullScreen does not allow.
+void MainWindow::ApplyGameModeFullscreen(bool fullscreen)
+{
+	if (!GetWxGUIConfig().game_mode)
+		return;
+	g_window_info.is_fullscreen = fullscreen;
+	if (m_fullscreenMenuItem)
+		m_fullscreenMenuItem->Check(fullscreen);
+	ShowFullScreen(fullscreen);
+	if (fullscreen)
+		m_menu_visible = false; // hidden by wxFULLSCREEN_NOMENUBAR
+	else
+		SetMenuVisible(false);
+	if (m_gameModePanel)
+		m_gameModePanel->SetFocus();
 }
 
 void MainWindow::OnOpenFolder(wxCommandEvent& event)
@@ -941,7 +1002,7 @@ void MainWindow::OpenSettings()
 	const bool paths_modified = frame.ShouldReloadGamelist();
 	const bool mlc_modified = frame.MLCModified();
 
-	if (paths_modified)
+	if (paths_modified && m_game_list)
 		m_game_list->ReloadGameEntries();
 	else
 		SaveSettings();
@@ -1516,13 +1577,14 @@ void MainWindow::OnMouseRight(wxMouseEvent& event)
 
 void MainWindow::OnGameListBeginUpdate(wxCommandEvent& event)
 {
-	if (m_game_list->IsShown())
+	if (m_game_list && m_info_bar && m_game_list->IsShown())
 		m_info_bar->ShowMessage(_("Updating game list..."));
 }
 
 void MainWindow::OnGameListEndUpdate(wxCommandEvent& event)
 {
-	m_info_bar->Dismiss();
+	if (m_info_bar)
+		m_info_bar->Dismiss();
 }
 
 void MainWindow::OnAccountListRefresh(wxCommandEvent& event)
@@ -1532,7 +1594,10 @@ void MainWindow::OnAccountListRefresh(wxCommandEvent& event)
 
 void MainWindow::OnRequestGameListRefresh(wxCommandEvent& event)
 {
-	m_game_list->ReloadGameEntries();
+	if (m_game_list)
+		m_game_list->ReloadGameEntries();
+	if (m_gameModePanel)
+		m_gameModePanel->RefreshGames();
 }
 
 void MainWindow::OnSetWindowTitle(wxCommandEvent& event)
@@ -1540,8 +1605,26 @@ void MainWindow::OnSetWindowTitle(wxCommandEvent& event)
 	this->SetTitle(event.GetString());
 }
 
+// Keys for the Game Menu while it is open. Returns true if the key was used.
+static bool _GameMenuKey(int key)
+{
+	switch (key)
+	{
+	case WXK_UP: case WXK_NUMPAD_UP: GameMode::QueueMenuNav(GameMode::Nav::Up); return true;
+	case WXK_DOWN: case WXK_NUMPAD_DOWN: GameMode::QueueMenuNav(GameMode::Nav::Down); return true;
+	case WXK_LEFT: case WXK_NUMPAD_LEFT: GameMode::QueueMenuNav(GameMode::Nav::Left); return true;
+	case WXK_RIGHT: case WXK_NUMPAD_RIGHT: GameMode::QueueMenuNav(GameMode::Nav::Right); return true;
+	case WXK_RETURN: case WXK_NUMPAD_ENTER: case WXK_SPACE: GameMode::QueueMenuNav(GameMode::Nav::Accept); return true;
+	case WXK_ESCAPE: case WXK_BACK: GameMode::QueueMenuNav(GameMode::Nav::Back); return true;
+	default: return false;
+	}
+}
+
 void MainWindow::OnKeyUp(wxKeyEvent& event)
 {
+	// the key-up of a key the Game Menu used must not reach the hotkeys (Esc = exit fullscreen)
+	if (m_gameMenuKeysDown.erase(event.GetKeyCode()))
+		return;
 	event.Skip();
 
 	if (swkbd_hasKeyboardInputHook())
@@ -1552,6 +1635,11 @@ void MainWindow::OnKeyUp(wxKeyEvent& event)
 
 void MainWindow::OnKeyDown(wxKeyEvent& event)
 {
+	if (GameMode::IsMenuOpen() && _GameMenuKey(event.GetKeyCode()))
+	{
+		m_gameMenuKeysDown.insert(event.GetKeyCode());
+		return;
+	}
 #if defined(__APPLE__)
        // On macOS, allow Cmd+Q to quit the application
     if (event.CmdDown() && event.GetKeyCode() == 'Q')
@@ -1573,6 +1661,8 @@ void MainWindow::OnKeyDown(wxKeyEvent& event)
 
 void MainWindow::OnChar(wxKeyEvent& event)
 {
+	if (GameMode::IsMenuOpen())
+		return;
 	if (swkbd_hasKeyboardInputHook())
 		swkbd_keyInput(event.GetUnicodeKey());
 
@@ -1854,11 +1944,14 @@ void MainWindow::SetFullScreen(bool state)
 	if (state)
 		m_menu_visible = false; // menu gets always disabled by wxFULLSCREEN_NOMENUBAR
 	else
-		SetMenuVisible(true);
+		SetMenuVisible(!GetWxGUIConfig().game_mode);
 }
 
 void MainWindow::EndEmulation() // unfinished - memory leaks and crashes after repeated use (after 3x usually)
 {
+	GameMode::SetMenuOpen(false);
+	GameMode::ClearReleasePending();
+	m_gameMenuKeysDown.clear();
 	CafeSystem::ShutdownTitle();
 	DestroyCanvas();
 	LatteRenderTarget_setScreenLayoutOverride(-1); // the next game applies its own
@@ -2384,6 +2477,8 @@ void MainWindow::RecreateMenu()
 			appendGlobalItems(layoutMenu);
 		}
 		viewMenu->AppendSubMenu(layoutMenu, _("&Screen Layout"));
+		viewMenu->AppendSeparator();
+		viewMenu->AppendCheckItem(MAINFRAME_MENU_ID_VIEW_GAME_MODE, _("&Game Mode"))->Check(GetWxGUIConfig().game_mode);
 	}
 	m_menuBar->Append(viewMenu, _("&View"));
 
@@ -2539,8 +2634,8 @@ void MainWindow::RecreateMenu()
 		UpdateNFCMenu();
 	}
 
-	// hide new menu in fullscreen
-	if (IsFullScreen())
+	// hide new menu in fullscreen, and always in Game Mode
+	if (IsFullScreen() || GetWxGUIConfig().game_mode)
 		SetMenuVisible(false);
 }
 

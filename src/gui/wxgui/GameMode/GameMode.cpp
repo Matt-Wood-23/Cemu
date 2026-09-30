@@ -1,0 +1,182 @@
+#include "wxgui/GameMode/GameMode.h"
+
+#include "Cafe/CafeSystem.h"
+#include "config/CemuConfig.h"
+#include "input/InputManager.h"
+#include "input/api/Controller.h"
+#include "input/emulated/ClassicController.h"
+#include "input/emulated/ProController.h"
+#include "input/emulated/VPADController.h"
+#include "input/emulated/WiimoteController.h"
+
+#include <wx/intl.h>
+
+#include <atomic>
+#include <deque>
+#include <mutex>
+
+namespace GameMode
+{
+	namespace
+	{
+		std::atomic<bool> s_menuOpen{false};
+		std::atomic<bool> s_releasePending{false};
+		std::mutex s_navMutex;
+		std::deque<Nav> s_navQueue;
+	}
+
+	bool IsMenuOpen()
+	{
+		return s_menuOpen.load();
+	}
+
+	void SetMenuOpen(bool open)
+	{
+		if (open && !CafeSystem::IsTitleRunning())
+			return;
+		if (!open && s_menuOpen.load())
+			s_releasePending = true;
+		s_menuOpen = open;
+		if (open)
+		{
+			std::scoped_lock lock(s_navMutex);
+			s_navQueue.clear();
+		}
+	}
+
+	void ToggleMenu()
+	{
+		SetMenuOpen(!IsMenuOpen());
+	}
+
+	bool IsGameInputBlocked()
+	{
+		return s_menuOpen.load() || s_releasePending.load();
+	}
+
+	// Called by the overlay once it has seen every button released after the menu closed.
+	void ClearReleasePending()
+	{
+		s_releasePending = false;
+	}
+
+	void QueueMenuNav(Nav nav)
+	{
+		std::scoped_lock lock(s_navMutex);
+		if (s_navQueue.size() < 32)
+			s_navQueue.push_back(nav);
+	}
+
+	bool TakeMenuNav(Nav& nav)
+	{
+		std::scoped_lock lock(s_navMutex);
+		if (s_navQueue.empty())
+			return false;
+		nav = s_navQueue.front();
+		s_navQueue.pop_front();
+		return true;
+	}
+
+	wxString ScreenLayoutName(int layout)
+	{
+		switch (layout)
+		{
+		case kKeepAspectRatio: return _("Fit (keep aspect ratio)");
+		case kStretch: return _("Stretch");
+		case kFill: return _("Fill (crop edges)");
+		case kAspect16x9: return _("16:9");
+		case kAspect16x10: return _("16:10");
+		case kAspect4x3: return _("4:3");
+		case kAspect21x9: return _("21:9");
+		case kIntegerScale: return _("Integer scale (pixel-sharp)");
+		default: return _("Fit (keep aspect ratio)");
+		}
+	}
+
+	// X and Y are not part of the generic EmulatedController interface; each controller type
+	// numbers its buttons differently. A Wiimote has neither, so its - and + stand in.
+	static void ReadFaceButtons(const EmulatedController& controller, bool& x, bool& y)
+	{
+		switch (controller.type())
+		{
+		case EmulatedController::VPAD:
+			x = controller.is_mapping_down(VPADController::kButtonId_X);
+			y = controller.is_mapping_down(VPADController::kButtonId_Y);
+			break;
+		case EmulatedController::Pro:
+			x = controller.is_mapping_down(ProController::kButtonId_X);
+			y = controller.is_mapping_down(ProController::kButtonId_Y);
+			break;
+		case EmulatedController::Classic:
+			x = controller.is_mapping_down(ClassicController::kButtonId_X);
+			y = controller.is_mapping_down(ClassicController::kButtonId_Y);
+			break;
+		case EmulatedController::Wiimote:
+			x = controller.is_mapping_down(WiimoteController::kButtonId_Minus);
+			y = controller.is_mapping_down(WiimoteController::kButtonId_Plus);
+			break;
+		default:
+			x = y = false;
+		}
+	}
+
+	void ControllerNav::Poll(std::vector<Nav>& out, bool updateStates)
+	{
+		bool now[kCount]{};
+		bool anyRaw = false;
+		auto& input = InputManager::instance();
+		for (size_t i = 0; i < InputManager::kMaxController; i++)
+		{
+			const auto controller = input.get_controller(i);
+			if (!controller)
+				continue;
+			if (updateStates)
+				controller->controllers_update_states();
+			for (const auto& physical : controller->get_controllers())
+				anyRaw |= !physical->get_state().buttons.IsIdle();
+
+			constexpr float kStick = 0.6f;
+			const auto axis = controller->get_axis();
+			now[(int)Nav::Up] |= controller->is_up_down() || axis.y >= kStick;
+			now[(int)Nav::Down] |= controller->is_down_down() || axis.y <= -kStick;
+			now[(int)Nav::Left] |= controller->is_left_down() || axis.x <= -kStick;
+			now[(int)Nav::Right] |= controller->is_right_down() || axis.x >= kStick;
+			now[(int)Nav::Accept] |= controller->is_a_down();
+			now[(int)Nav::Back] |= controller->is_b_down();
+			bool x = false, y = false;
+			ReadFaceButtons(*controller, x, y);
+			now[(int)Nav::Options] |= x;
+			now[(int)Nav::Settings] |= y;
+		}
+
+		const auto t = std::chrono::steady_clock::now();
+		for (int i = 0; i < kCount; i++)
+		{
+			const bool isDirection = i <= (int)Nav::Right;
+			if (now[i] && !m_down[i])
+			{
+				if (m_primed)
+					out.push_back((Nav)i);
+				m_nextRepeat[i] = t + std::chrono::milliseconds(400);
+			}
+			else if (now[i] && isDirection && m_primed && t >= m_nextRepeat[i])
+			{
+				out.push_back((Nav)i);
+				m_nextRepeat[i] = t + std::chrono::milliseconds(90);
+			}
+			m_down[i] = now[i];
+		}
+		m_primed = true;
+		m_anyRawDown = anyRaw;
+	}
+
+	bool ControllerNav::AnyDown() const
+	{
+		if (m_anyRawDown)
+			return true;
+		for (bool down : m_down)
+			if (down)
+				return true;
+		return false;
+	}
+}

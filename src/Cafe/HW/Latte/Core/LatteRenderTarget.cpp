@@ -1048,6 +1048,7 @@ void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPa
 	swkbd_render(!isPadView);
 	nn::erreula::render(!isPadView);
 	LatteOverlay_render(isPadView);
+	WindowSystem::RenderGameMenu(!isPadView); // Game Mode's in-game menu, drawn above everything
 	g_renderer->ImguiEnd();
 }
 
