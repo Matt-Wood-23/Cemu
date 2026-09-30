@@ -426,6 +426,22 @@ namespace GameMode
 		}
 
 		// Same glyph families as the launcher (see GameModePanel::DrawGlyph).
+		// Keyboard style: the keys the Game Menu listens to
+		std::string KeyName(Nav nav)
+		{
+			return nav == Nav::Accept ? U8(_("Enter")) : U8(_("Esc"));
+		}
+
+		float GlyphWidth(Nav nav, float radius)
+		{
+			if (GetButtonStyle() != ButtonStyle::Keyboard)
+				return radius * 2;
+			return std::max(radius * 2, TextSize(radius * 0.95f, KeyName(nav)).x + radius * 1.1f);
+		}
+
+		// Draws the glyph with its left edge at x and returns its width.
+		float DrawGlyphAt(ImDrawList* dl, Nav nav, float x, float cy, float radius);
+
 		void DrawGlyph(ImDrawList* dl, Nav nav, ImVec2 c, float radius)
 		{
 			const ButtonStyle style = GetButtonStyle();
@@ -472,6 +488,25 @@ namespace GameMode
 			const float size = radius * 1.15f;
 			const ImVec2 ts = TextSize(size, letter);
 			Text(dl, size, ImVec2(c.x - ts.x / 2, c.y - ts.y / 2), text, letter);
+		}
+
+		float DrawGlyphAt(ImDrawList* dl, Nav nav, float x, float cy, float radius)
+		{
+			const float width = GlyphWidth(nav, radius);
+			if (GetButtonStyle() == ButtonStyle::Keyboard)
+			{
+				// keycap: light key with a darker bottom edge
+				const float h = radius * 2, r = radius * 0.35f;
+				dl->AddRectFilled(ImVec2(x, cy - radius), ImVec2(x + width, cy - radius + h), kOutline, r);
+				dl->AddRectFilled(ImVec2(x, cy - radius), ImVec2(x + width, cy - radius + h - radius * 0.22f), kOnSurface, r);
+				const float size = radius * 0.95f;
+				const std::string name = KeyName(nav);
+				const ImVec2 ts = TextSize(size, name);
+				Text(dl, size, ImVec2(x + (width - ts.x) / 2, cy - radius * 0.1f - ts.y / 2), kGlyphText, name);
+				return width;
+			}
+			DrawGlyph(dl, nav, ImVec2(x + radius, cy), radius);
+			return width;
 		}
 
 		void DrawChevron(ImDrawList* dl, float cx, float cy, float size, ImU32 colour, float thickness)
@@ -648,9 +683,9 @@ namespace GameMode
 			const std::pair<Nav, std::string> hints[] = {{Nav::Accept, U8(_("Select"))}, {Nav::Back, st.page == Page::Main ? U8(_("Resume")) : U8(_("Back"))}};
 			for (const auto& [glyph, label] : hints)
 			{
-				DrawGlyph(dl, glyph, ImVec2(hx + 20 * s, hy), 20 * s);
-				TextV(dl, smallSize, hx + 50 * s, hy, kOnSurface, label);
-				hx += 50 * s + TextSize(smallSize, label).x + 36 * s;
+				const float glyphW = DrawGlyphAt(dl, glyph, hx, hy, 20 * s);
+				TextV(dl, smallSize, hx + glyphW + 10 * s, hy, kOnSurface, label);
+				hx += glyphW + 10 * s + TextSize(smallSize, label).x + 36 * s;
 			}
 		}
 		ImGui::End();

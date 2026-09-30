@@ -152,7 +152,9 @@ private:
 	void DrawToast(wxGraphicsContext* gc, const wxRect& area);
 	void DrawIcon(wxGraphicsContext* gc, uint64_t titleId, const wxString& name, const wxRect& rect, double radius);
 	// the button behind a menu action, drawn in the chosen style (Nintendo, Xbox, PlayStation, Deck)
-	void DrawGlyph(wxGraphicsContext* gc, GameMode::Nav nav, double cx, double cy, double radius);
+	// Returns the width it took; with keycaps (Keyboard style) that depends on the key name.
+	double DrawGlyph(wxGraphicsContext* gc, GameMode::Nav nav, double left, double cy, double radius);
+	double GlyphWidth(wxGraphicsContext* gc, GameMode::Nav nav, double radius);
 	wxBitmap GetScaledIcon(uint64_t titleId, int size);
 	int LibraryColumns(int width) const;
 	double RowHeight(const Row& row) const;

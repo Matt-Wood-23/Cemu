@@ -47,6 +47,7 @@ namespace GameMode
 		Xbox = 1,
 		PlayStation = 2,
 		SteamDeck = 3,
+		Keyboard = 4, // keycaps: Enter, Esc, X, Y
 		Count
 	};
 
@@ -54,7 +55,8 @@ namespace GameMode
 	struct MappingEntry
 	{
 		uint64_t id = 0;
-		wxString name;  // "A", "ZL", "Left stick up", ...
+		wxString group; // section heading: "Buttons", "D-Pad", "Left Stick", ...
+		wxString name;  // label within the section: "A", "Up", "Click (L3)", ...
 		wxString bound; // physical button name, empty when unbound
 	};
 

@@ -119,6 +119,7 @@ namespace
 		case GameMode::ButtonStyle::Xbox: return _("Xbox");
 		case GameMode::ButtonStyle::PlayStation: return _("PlayStation");
 		case GameMode::ButtonStyle::SteamDeck: return _("Steam Deck (SteamOS)");
+		case GameMode::ButtonStyle::Keyboard: return _("Keyboard");
 		default: return _("Nintendo");
 		}
 	}
@@ -131,6 +132,18 @@ namespace
 		if (style == GameMode::ButtonStyle::Nintendo)
 			return face == Face::South ? "B" : face == Face::East ? "A" : face == Face::West ? "Y" : "X";
 		return face == Face::South ? "A" : face == Face::East ? "B" : face == Face::West ? "X" : "Y";
+	}
+
+	// Keyboard style: the keys the launcher itself listens to
+	wxString KeyName(GameMode::Nav nav)
+	{
+		switch (nav)
+		{
+		case GameMode::Nav::Accept: return _("Enter");
+		case GameMode::Nav::Back: return _("Esc");
+		case GameMode::Nav::Options: return "X";
+		default: return "Y";
+		}
 	}
 
 	wxLongLong NowMs()
@@ -698,13 +711,18 @@ GameModePanel::Page GameModePanel::MakePlayerPage(int player)
 		};
 		rows.push_back(save);
 
-		Row header;
-		header.kind = RowKind::Header;
-		header.label = _("Buttons");
-		rows.push_back(header);
-
+		wxString group;
 		for (const auto& entry : b->GetMappings(player))
 		{
+			if (entry.group != group)
+			{
+				// section heading: Buttons, D-Pad, Left Stick, Right Stick, ...
+				group = entry.group;
+				Row header;
+				header.kind = RowKind::Header;
+				header.label = group;
+				rows.push_back(header);
+			}
 			Row row;
 			row.kind = RowKind::Action;
 			row.label = entry.name;
@@ -715,10 +733,11 @@ GameModePanel::Page GameModePanel::MakePlayerPage(int player)
 						return e.bound.empty() ? wxString(_("Not set")) : e.bound;
 				return wxString();
 			};
-			const wxString name = entry.name;
+			// full name for the capture prompt, e.g. "Left Stick: Up"
+			const wxString name = entry.group.empty() ? entry.name : entry.group + ": " + entry.name;
 			row.action = [this, b, player, id, name]() {
 				b->BeginMappingCapture(player, id);
-				StartCapture(wxString::Format(_("Button: %s"), name), _("Press the button to use on the controller..."),
+				StartCapture(name, _("Press a button on the controller, or a key (Esc cancels)..."),
 					[b]() { return b->PollMappingCapture(); }, nullptr,
 					[this, name]() { ShowToast(wxString::Format(_("%s mapped"), name)); });
 			};
@@ -1367,8 +1386,29 @@ void GameModePanel::DrawIcon(wxGraphicsContext* gc, uint64_t titleId, const wxSt
 	DrawTextV(gc, initial, rect.x + (rect.width - tw) / 2, rect.y + rect.height / 2.0);
 }
 
-void GameModePanel::DrawGlyph(wxGraphicsContext* gc, Nav nav, double cx, double cy, double radius)
+double GameModePanel::GlyphWidth(wxGraphicsContext* gc, Nav nav, double radius)
 {
+	if (m_backend->GetButtonStyle() != GameMode::ButtonStyle::Keyboard)
+		return radius * 2;
+	gc->SetFont(MakeFont(radius * 0.95, true), kOnSurface);
+	return std::max(radius * 2, TextWidth(gc, KeyName(nav)) + radius * 1.1);
+}
+
+double GameModePanel::DrawGlyph(wxGraphicsContext* gc, Nav nav, double left, double cy, double radius)
+{
+	const double width = GlyphWidth(gc, nav, radius);
+	const double cx = left + width / 2;
+	if (m_backend->GetButtonStyle() == GameMode::ButtonStyle::Keyboard)
+	{
+		// a keycap: light key with a darker bottom edge
+		const double h = radius * 2;
+		FillRounded(gc, left, cy - radius, width, h, radius * 0.35, kOutline);
+		FillRounded(gc, left, cy - radius, width, h - radius * 0.22, radius * 0.35, kOnSurface);
+		gc->SetFont(MakeFont(radius * 0.95, true), kBackground);
+		const wxString name = KeyName(nav);
+		DrawTextV(gc, name, cx - TextWidth(gc, name) / 2, cy - radius * 0.1);
+		return width;
+	}
 	using GameMode::ButtonStyle;
 	using GameMode::Face;
 	const ButtonStyle style = m_backend->GetButtonStyle();
@@ -1409,7 +1449,7 @@ void GameModePanel::DrawGlyph(wxGraphicsContext* gc, Nav nav, double cx, double 
 		}
 		gc->SetPen(wxPen(colour, (int)std::lround(w)));
 		gc->StrokePath(path);
-		return;
+		return width;
 	}
 
 	const wxString letter = FaceLabel(style, face);
@@ -1442,6 +1482,7 @@ void GameModePanel::DrawGlyph(wxGraphicsContext* gc, Nav nav, double cx, double 
 	gc->SetFont(MakeFont(radius * 1.15, true), text);
 	const double tw = TextWidth(gc, letter);
 	DrawTextV(gc, letter, cx - tw / 2, cy);
+	return width;
 }
 
 void GameModePanel::OnPaint(wxPaintEvent& event)
@@ -1498,14 +1539,15 @@ void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
 
 		// right side: status and a settings chip (also clickable)
 		const wxString chipText = _("Settings");
+		const double chipGlyphW = GlyphWidth(gc, Nav::Settings, S(18));
 		gc->SetFont(MakeFont(S(26), true), kOnSecondaryContainer);
-		const double chipW = TextWidth(gc, chipText) + S(64) + S(28);
+		const double chipW = TextWidth(gc, chipText) + chipGlyphW + S(28) + S(40);
 		const double chipH = S(60);
 		const double chipX = area.GetRight() - pad - chipW;
 		FillRounded(gc, chipX, cy - chipH / 2, chipW, chipH, chipH / 2, kSecondaryContainer);
-		DrawGlyph(gc, Nav::Settings, chipX + S(34), cy, S(18));
+		DrawGlyph(gc, Nav::Settings, chipX + S(16), cy, S(18));
 		gc->SetFont(MakeFont(S(26), true), kOnSecondaryContainer); // the glyph changed the font
-		DrawTextV(gc, chipText, chipX + S(64), cy);
+		DrawTextV(gc, chipText, chipX + S(16) + chipGlyphW + S(12), cy);
 		m_hitRects.push_back({wxRect((int)chipX, (int)(cy - chipH / 2), (int)chipW, (int)chipH), kHitSettingsChip});
 
 		wxString status;
@@ -1541,12 +1583,14 @@ void GameModePanel::DrawHints(wxGraphicsContext* gc, const wxRect& area)
 	for (auto it = hints.rbegin(); it != hints.rend(); ++it)
 	{
 		const wxString& label = it->second;
-		const double labelW = TextWidth(gc, label);
-		const double itemW = S(44) + S(12) + labelW;
-		const double itemX = x - itemW;
-		DrawGlyph(gc, it->first, itemX + S(22), cy, S(22));
 		gc->SetFont(MakeFont(S(26)), kOnSurface);
-		DrawTextV(gc, label, itemX + S(56), cy);
+		const double labelW = TextWidth(gc, label);
+		const double glyphW = GlyphWidth(gc, it->first, S(22));
+		const double itemW = glyphW + S(12) + labelW;
+		const double itemX = x - itemW;
+		DrawGlyph(gc, it->first, itemX, cy, S(22));
+		gc->SetFont(MakeFont(S(26)), kOnSurface);
+		DrawTextV(gc, label, itemX + glyphW + S(12), cy);
 		m_hitRects.push_back({wxRect((int)itemX, (int)(cy - S(30)), (int)itemW, (int)S(60)), kHintBase - (int)it->first});
 		x = itemX - S(40);
 	}

@@ -612,6 +612,13 @@ void GameModeBackendCemu::BindGameMenuKey(int wxKeyCode, bool alt, bool ctrl, bo
 
 namespace
 {
+	wxString DeviceLabel(const ControllerBase& device)
+	{
+		if (device.api() == InputAPI::Keyboard)
+			return _("Keyboard");
+		return wxString::FromUTF8(device.display_name()) + " (" + wxString::FromUTF8(std::string(device.api_name())) + ")";
+	}
+
 	constexpr EmulatedController::Type kTypes[] = {EmulatedController::VPAD, EmulatedController::Pro, EmulatedController::Classic, EmulatedController::Wiimote};
 
 	wxString TypeName(EmulatedController::Type type)
@@ -626,16 +633,100 @@ namespace
 		}
 	}
 
-	std::string_view MappingName(EmulatedController::Type type, uint64 id)
+	struct LayoutEntry
 	{
+		wxString group;
+		uint64 id;
+		wxString name;
+	};
+
+	// Every mappable button of a controller type, grouped the way a player thinks about them.
+	// Cemu's own names ("up", "click") repeat across the D-pad and both sticks.
+	std::vector<LayoutEntry> MappingLayout(EmulatedController::Type type)
+	{
+		std::vector<LayoutEntry> layout;
+		const wxString buttons = _("Buttons"), dpad = _("D-Pad"), left = _("Left Stick"), right = _("Right Stick");
+		auto add = [&](const wxString& group, uint64 id, const wxString& name) { layout.push_back({group, id, name}); };
+		auto directions = [&](const wxString& group, uint64 up, uint64 down, uint64 l, uint64 r) {
+			add(group, up, _("Up"));
+			add(group, down, _("Down"));
+			add(group, l, _("Left"));
+			add(group, r, _("Right"));
+		};
 		switch (type)
 		{
-		case EmulatedController::VPAD: return VPADController::get_button_name((VPADController::ButtonId)id);
-		case EmulatedController::Pro: return ProController::get_button_name((ProController::ButtonId)id);
-		case EmulatedController::Classic: return ClassicController::get_button_name((ClassicController::ButtonId)id);
-		case EmulatedController::Wiimote: return WiimoteController::get_button_name((WiimoteController::ButtonId)id);
-		default: return {};
+		case EmulatedController::VPAD:
+		{
+			using C = VPADController;
+			for (auto [id, name] : {std::pair<uint64, const char*>{C::kButtonId_A, "A"}, {C::kButtonId_B, "B"}, {C::kButtonId_X, "X"}, {C::kButtonId_Y, "Y"},
+				{C::kButtonId_L, "L"}, {C::kButtonId_R, "R"}, {C::kButtonId_ZL, "ZL"}, {C::kButtonId_ZR, "ZR"}})
+				add(buttons, id, name);
+			add(buttons, C::kButtonId_Plus, _("+ (Plus)"));
+			add(buttons, C::kButtonId_Minus, _("- (Minus)"));
+			add(buttons, C::kButtonId_Home, _("HOME"));
+			directions(dpad, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right);
+			directions(left, C::kButtonId_StickL_Up, C::kButtonId_StickL_Down, C::kButtonId_StickL_Left, C::kButtonId_StickL_Right);
+			add(left, C::kButtonId_StickL, _("Click (L3)"));
+			directions(right, C::kButtonId_StickR_Up, C::kButtonId_StickR_Down, C::kButtonId_StickR_Left, C::kButtonId_StickR_Right);
+			add(right, C::kButtonId_StickR, _("Click (R3)"));
+			add(_("GamePad"), C::kButtonId_Mic, _("Blow into microphone"));
+			add(_("GamePad"), C::kButtonId_Screen, _("Show GamePad screen"));
+			break;
 		}
+		case EmulatedController::Pro:
+		{
+			using C = ProController;
+			for (auto [id, name] : {std::pair<uint64, const char*>{C::kButtonId_A, "A"}, {C::kButtonId_B, "B"}, {C::kButtonId_X, "X"}, {C::kButtonId_Y, "Y"},
+				{C::kButtonId_L, "L"}, {C::kButtonId_R, "R"}, {C::kButtonId_ZL, "ZL"}, {C::kButtonId_ZR, "ZR"}})
+				add(buttons, id, name);
+			add(buttons, C::kButtonId_Plus, _("+ (Plus)"));
+			add(buttons, C::kButtonId_Minus, _("- (Minus)"));
+			add(buttons, C::kButtonId_Home, _("HOME"));
+			directions(dpad, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right);
+			directions(left, C::kButtonId_StickL_Up, C::kButtonId_StickL_Down, C::kButtonId_StickL_Left, C::kButtonId_StickL_Right);
+			add(left, C::kButtonId_StickL, _("Click (L3)"));
+			directions(right, C::kButtonId_StickR_Up, C::kButtonId_StickR_Down, C::kButtonId_StickR_Left, C::kButtonId_StickR_Right);
+			add(right, C::kButtonId_StickR, _("Click (R3)"));
+			break;
+		}
+		case EmulatedController::Classic:
+		{
+			using C = ClassicController;
+			for (auto [id, name] : {std::pair<uint64, const char*>{C::kButtonId_A, "A"}, {C::kButtonId_B, "B"}, {C::kButtonId_X, "X"}, {C::kButtonId_Y, "Y"},
+				{C::kButtonId_L, "L"}, {C::kButtonId_R, "R"}, {C::kButtonId_ZL, "ZL"}, {C::kButtonId_ZR, "ZR"}})
+				add(buttons, id, name);
+			add(buttons, C::kButtonId_Plus, _("+ (Plus)"));
+			add(buttons, C::kButtonId_Minus, _("- (Minus)"));
+			add(buttons, C::kButtonId_Home, _("HOME"));
+			directions(dpad, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right);
+			directions(left, C::kButtonId_StickL_Up, C::kButtonId_StickL_Down, C::kButtonId_StickL_Left, C::kButtonId_StickL_Right);
+			directions(right, C::kButtonId_StickR_Up, C::kButtonId_StickR_Down, C::kButtonId_StickR_Left, C::kButtonId_StickR_Right);
+			break;
+		}
+		case EmulatedController::Wiimote:
+		{
+			using C = WiimoteController;
+			add(buttons, C::kButtonId_A, "A");
+			add(buttons, C::kButtonId_B, "B");
+			add(buttons, C::kButtonId_1, "1");
+			add(buttons, C::kButtonId_2, "2");
+			add(buttons, C::kButtonId_Plus, _("+ (Plus)"));
+			add(buttons, C::kButtonId_Minus, _("- (Minus)"));
+			add(buttons, C::kButtonId_Home, _("HOME"));
+			directions(dpad, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right);
+			const wxString nunchuk = _("Nunchuk");
+			add(nunchuk, C::kButtonId_Nunchuck_C, "C");
+			add(nunchuk, C::kButtonId_Nunchuck_Z, "Z");
+			add(nunchuk, C::kButtonId_Nunchuck_Up, _("Stick up"));
+			add(nunchuk, C::kButtonId_Nunchuck_Down, _("Stick down"));
+			add(nunchuk, C::kButtonId_Nunchuck_Left, _("Stick left"));
+			add(nunchuk, C::kButtonId_Nunchuck_Right, _("Stick right"));
+			break;
+		}
+		default:
+			break;
+		}
+		return layout;
 	}
 }
 
@@ -700,9 +791,8 @@ void GameModeBackendCemu::RefreshDevices()
 {
 	m_devices.clear();
 	auto& input = InputManager::instance();
-	// gamepads only: keyboard mapping needs key events the launcher consumes, and scanning for
-	// Wii Remotes or DSU servers can block
-	for (const auto api : {InputAPI::SDLController, InputAPI::XInput, InputAPI::WGIGamepad})
+	// gamepads and the keyboard; scanning for Wii Remotes or DSU servers can block
+	for (const auto api : {InputAPI::SDLController, InputAPI::XInput, InputAPI::WGIGamepad, InputAPI::Keyboard})
 	{
 		for (const auto& provider : input.get_api_providers()[api])
 		{
@@ -722,14 +812,14 @@ Choice GameModeBackendCemu::GetPlayerDevice(int player)
 	for (size_t i = 0; i < m_devices.size(); i++)
 	{
 		const auto& device = m_devices[i];
-		choice.options.push_back(wxString::FromUTF8(device->display_name()) + " (" + wxString::FromUTF8(std::string(device->api_name())) + ")");
+		choice.options.push_back(DeviceLabel(*device));
 		if (current && current->api() == device->api() && current->uuid() == device->uuid())
 			choice.selected = (int)i;
 	}
 	// a device that is set up but not connected, or a keyboard, still shows as the current one
 	if (current && (m_devices.empty() || choice.options.size() == m_devices.size()) && std::none_of(m_devices.begin(), m_devices.end(), [&](const auto& d) { return d->api() == current->api() && d->uuid() == current->uuid(); }))
 	{
-		choice.options.insert(choice.options.begin(), wxString::FromUTF8(current->display_name()) + " (" + wxString::FromUTF8(std::string(current->api_name())) + ")");
+		choice.options.insert(choice.options.begin(), DeviceLabel(*current));
 		choice.selected = 0;
 	}
 	if (choice.options.empty())
@@ -765,13 +855,8 @@ std::vector<GameMode::MappingEntry> GameModeBackendCemu::GetMappings(int player)
 	const auto controller = InputManager::instance().get_controller(player);
 	if (!controller)
 		return entries;
-	for (uint64 id = 1; id < controller->get_highest_mapping_id(); id++)
-	{
-		const auto name = MappingName(controller->type(), id);
-		if (name.empty())
-			continue;
-		entries.push_back({id, wxString::FromUTF8(std::string(name)), wxString::FromUTF8(controller->get_mapping_name(id))});
-	}
+	for (const auto& entry : MappingLayout(controller->type()))
+		entries.push_back({entry.id, entry.group, entry.name, wxString::FromUTF8(controller->get_mapping_name(entry.id))});
 	return entries;
 }
 
@@ -810,7 +895,24 @@ bool GameModeBackendCemu::PollMappingCapture()
 	if (!controller)
 		return false;
 	bool allIdle = true;
-	for (const auto& device : controller->get_controllers())
+	// the player's devices, plus the keyboard so a key can always be bound (it is added to the
+	// player when used, like picking a key in Input settings)
+	auto devices = controller->get_controllers();
+	std::shared_ptr<ControllerBase> keyboard;
+	if (std::none_of(devices.begin(), devices.end(), [](const auto& d) { return d->api() == InputAPI::Keyboard; }))
+	{
+		for (const auto& provider : InputManager::instance().get_api_providers()[InputAPI::Keyboard])
+		{
+			for (const auto& device : provider->get_controllers())
+			{
+				if (!keyboard)
+					keyboard = device;
+			}
+		}
+		if (keyboard)
+			devices.push_back(keyboard);
+	}
+	for (const auto& device : devices)
 	{
 		const auto& state = device->update_state();
 		if (state.buttons.IsIdle())
@@ -834,6 +936,8 @@ bool GameModeBackendCemu::PollMappingCapture()
 				if (id >= kButtonAxisStart && device->get_axis_value(id) < 0.33f)
 					continue;
 			}
+			if (device == keyboard)
+				controller->add_controller(device);
 			controller->set_mapping(m_captureMapping, device, id);
 			SavePlayer(m_capturePlayer);
 			m_capturePlayer = -1;

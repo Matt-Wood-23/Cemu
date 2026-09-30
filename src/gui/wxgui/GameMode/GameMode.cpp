@@ -107,6 +107,7 @@ namespace GameMode
 		case ButtonStyle::Xbox: return _("Xbox");
 		case ButtonStyle::PlayStation: return _("PlayStation");
 		case ButtonStyle::SteamDeck: return _("Steam Deck (SteamOS)");
+		case ButtonStyle::Keyboard: return _("Keyboard");
 		default: return _("Nintendo");
 		}
 	}
@@ -174,30 +175,55 @@ namespace GameMode
 		return kSdlFaces[*button];
 	}
 
-	// X and Y are not part of the generic EmulatedController interface; each controller type
-	// numbers its buttons differently. A Wiimote has neither, so its - and + stand in.
-	static void ReadFaceButtons(const EmulatedController& controller, bool& x, bool& y)
+	namespace
 	{
-		switch (controller.type())
+		struct NavMappings
 		{
-		case EmulatedController::VPAD:
-			x = controller.is_mapping_down(VPADController::kButtonId_X);
-			y = controller.is_mapping_down(VPADController::kButtonId_Y);
-			break;
-		case EmulatedController::Pro:
-			x = controller.is_mapping_down(ProController::kButtonId_X);
-			y = controller.is_mapping_down(ProController::kButtonId_Y);
-			break;
-		case EmulatedController::Classic:
-			x = controller.is_mapping_down(ClassicController::kButtonId_X);
-			y = controller.is_mapping_down(ClassicController::kButtonId_Y);
-			break;
-		case EmulatedController::Wiimote:
-			x = controller.is_mapping_down(WiimoteController::kButtonId_Minus);
-			y = controller.is_mapping_down(WiimoteController::kButtonId_Plus);
-			break;
-		default:
-			x = y = false;
+			uint64 a, b, x, y, up, down, left, right, stickUp; // 0 = none
+		};
+
+		// X and Y are not part of the generic EmulatedController interface and each controller
+		// type numbers its buttons differently. A Wiimote has neither, so its - and + stand in.
+		NavMappings MappingsFor(EmulatedController::Type type)
+		{
+			switch (type)
+			{
+			case EmulatedController::VPAD:
+			{
+				using C = VPADController;
+				return {C::kButtonId_A, C::kButtonId_B, C::kButtonId_X, C::kButtonId_Y, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right, C::kButtonId_StickL_Up};
+			}
+			case EmulatedController::Pro:
+			{
+				using C = ProController;
+				return {C::kButtonId_A, C::kButtonId_B, C::kButtonId_X, C::kButtonId_Y, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right, C::kButtonId_StickL_Up};
+			}
+			case EmulatedController::Classic:
+			{
+				using C = ClassicController;
+				return {C::kButtonId_A, C::kButtonId_B, C::kButtonId_X, C::kButtonId_Y, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right, C::kButtonId_StickL_Up};
+			}
+			case EmulatedController::Wiimote:
+			{
+				using C = WiimoteController;
+				return {C::kButtonId_A, C::kButtonId_B, C::kButtonId_Minus, C::kButtonId_Plus, C::kButtonId_Up, C::kButtonId_Down, C::kButtonId_Left, C::kButtonId_Right, C::kButtonId_Nunchuck_Up};
+			}
+			default:
+				return {};
+			}
+		}
+
+		// Keyboard-mapped buttons are skipped: the menus read the keyboard directly (arrows,
+		// Enter, Esc), so counting them here as well would move twice per key press.
+		bool FromKeyboard(const EmulatedController& controller, uint64 mapping)
+		{
+			const auto device = controller.get_mapping_controller(mapping);
+			return device && device->api() == InputAPI::Keyboard;
+		}
+
+		bool Down(const EmulatedController& controller, uint64 mapping)
+		{
+			return mapping && controller.is_mapping_down(mapping) && !FromKeyboard(controller, mapping);
 		}
 	}
 
@@ -217,17 +243,16 @@ namespace GameMode
 				anyRaw |= !physical->get_state().buttons.IsIdle();
 
 			constexpr float kStick = 0.6f;
-			const auto axis = controller->get_axis();
-			now[(int)Nav::Up] |= controller->is_up_down() || axis.y >= kStick;
-			now[(int)Nav::Down] |= controller->is_down_down() || axis.y <= -kStick;
-			now[(int)Nav::Left] |= controller->is_left_down() || axis.x <= -kStick;
-			now[(int)Nav::Right] |= controller->is_right_down() || axis.x >= kStick;
-			now[(int)Nav::Accept] |= controller->is_a_down();
-			now[(int)Nav::Back] |= controller->is_b_down();
-			bool x = false, y = false;
-			ReadFaceButtons(*controller, x, y);
-			now[(int)Nav::Options] |= x;
-			now[(int)Nav::Settings] |= y;
+			const NavMappings m = MappingsFor(controller->type());
+			const glm::vec2 axis = (m.stickUp && FromKeyboard(*controller, m.stickUp)) ? glm::vec2{} : controller->get_axis();
+			now[(int)Nav::Up] |= Down(*controller, m.up) || axis.y >= kStick;
+			now[(int)Nav::Down] |= Down(*controller, m.down) || axis.y <= -kStick;
+			now[(int)Nav::Left] |= Down(*controller, m.left) || axis.x <= -kStick;
+			now[(int)Nav::Right] |= Down(*controller, m.right) || axis.x >= kStick;
+			now[(int)Nav::Accept] |= Down(*controller, m.a);
+			now[(int)Nav::Back] |= Down(*controller, m.b);
+			now[(int)Nav::Options] |= Down(*controller, m.x);
+			now[(int)Nav::Settings] |= Down(*controller, m.y);
 		}
 
 		const auto t = std::chrono::steady_clock::now();
