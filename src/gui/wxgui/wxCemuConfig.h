@@ -96,6 +96,10 @@ struct wxCemuConfig
 	};
 	std::map<uint64, CustomTextureTitleSettings> custom_textures;
 
+	// Screen layout (a FullscreenScaling value) per title, set from View > Screen Layout while the
+	// game runs. A title with no entry uses the global setting (CemuConfig::fullscreen_scaling).
+	std::map<uint64, sint32> screen_layouts;
+
 	Vector2i window_position{-1, -1};
 	Vector2i window_size{-1, -1};
 	ConfigValue<bool> window_maximized;

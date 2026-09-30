@@ -28,6 +28,7 @@
 
 // settings
 #include "config/CemuConfig.h"
+#include "Cafe/HW/Latte/Core/Latte.h"
 #include "config/LaunchSettings.h"
 #include "config/ActiveSettings.h"
 
@@ -117,6 +118,12 @@ enum
 	MAINFRAME_MENU_ID_TOOLS_DOWNLOAD_MANAGER,
 	MAINFRAME_MENU_ID_TOOLS_EMULATED_USB_DEVICES,
 	MAINFRAME_MENU_ID_TOOLS_CHEATS,
+	// view -> screen layout. <base> + FullscreenScaling value
+	MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_DEFAULT = 20800, // running game: follow the global default
+	MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0 = 20801,       // running game: its own layout
+	MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_LAST = MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0 + 31,
+	MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 = 20840,     // default for all games
+	MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST = MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 + 31,
 	// cpu
 	// cpu->timer speed
 	MAINFRAME_MENU_ID_TIMER_SPEED_1X = 20700,
@@ -202,6 +209,10 @@ EVT_MENU(MAINFRAME_MENU_ID_TOOLS_TITLE_MANAGER, MainWindow::OnToolsInput)
 EVT_MENU(MAINFRAME_MENU_ID_TOOLS_DOWNLOAD_MANAGER, MainWindow::OnToolsInput)
 EVT_MENU(MAINFRAME_MENU_ID_TOOLS_EMULATED_USB_DEVICES, MainWindow::OnToolsInput)
 EVT_MENU(MAINFRAME_MENU_ID_TOOLS_CHEATS, MainWindow::OnToolsInput)
+// view menu
+EVT_MENU(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_DEFAULT, MainWindow::OnScreenLayoutMenu)
+EVT_MENU_RANGE(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0, MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_LAST, MainWindow::OnScreenLayoutMenu)
+EVT_MENU_RANGE(MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0, MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST, MainWindow::OnScreenLayoutMenu)
 // cpu menu
 EVT_MENU(MAINFRAME_MENU_ID_TIMER_SPEED_8X, MainWindow::OnDebugSetting)
 EVT_MENU(MAINFRAME_MENU_ID_TIMER_SPEED_4X, MainWindow::OnDebugSetting)
@@ -625,6 +636,7 @@ bool MainWindow::FileLoad(const fs::path launchPath, wxLaunchGameEvent::INITIATE
 #endif
 
 	CreateCanvas();
+	ApplyScreenLayoutForRunningTitle();
 	CafeSystem::LaunchForegroundTitle();
 	RecreateMenu();
 	UpdateChildWindowTitleRunningState();
@@ -695,6 +707,63 @@ void MainWindow::ApplyCustomTextureSettings()
 	const auto& guiConfig = GetWxGUIConfig();
 	for (const auto& [titleId, settings] : guiConfig.custom_textures)
 		LatteTextureReplace::SetTitleSettings(titleId, settings.enabled, settings.packs);
+}
+
+static wxString _ScreenLayoutName(sint32 layout)
+{
+	switch (layout)
+	{
+	case kKeepAspectRatio: return _("Fit (keep aspect ratio)");
+	case kStretch: return _("Stretch");
+	case kFill: return _("Fill (crop edges)");
+	case kAspect16x9: return _("16:9");
+	case kAspect16x10: return _("16:10");
+	case kAspect4x3: return _("4:3");
+	case kAspect21x9: return _("21:9");
+	case kIntegerScale: return _("Integer scale (pixel-sharp)");
+	default: return _("Fit (keep aspect ratio)");
+	}
+}
+
+static sint32 _GlobalScreenLayout()
+{
+	const sint32 layout = GetConfig().fullscreen_scaling;
+	return (layout >= 0 && layout < kFullscreenScalingCount) ? layout : kKeepAspectRatio;
+}
+
+// Push the saved layout of the title about to run (or none) into the renderer.
+void MainWindow::ApplyScreenLayoutForRunningTitle()
+{
+	const auto& layouts = GetWxGUIConfig().screen_layouts;
+	const auto it = layouts.find(CafeSystem::GetForegroundTitleId());
+	LatteRenderTarget_setScreenLayoutOverride(it != layouts.end() ? it->second : -1);
+}
+
+// View > Screen Layout. With a game running the top list is that game's layout, saved per title;
+// "Default for all games" is the Fullscreen scaling setting from General settings. Both take
+// effect on the next frame.
+void MainWindow::OnScreenLayoutMenu(wxCommandEvent& event)
+{
+	const int id = event.GetId();
+	if (id >= MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 && id <= MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_LAST)
+	{
+		GetConfig().fullscreen_scaling = id - MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0;
+		GetConfigHandle().Save();
+	}
+	else if (m_game_launched)
+	{
+		const uint64 titleId = CafeSystem::GetForegroundTitleId();
+		auto& layouts = GetWxGUIConfig().screen_layouts;
+		if (id == MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_DEFAULT)
+			layouts.erase(titleId);
+		else
+			layouts[titleId] = id - MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0;
+		g_wxConfig.Save();
+		ApplyScreenLayoutForRunningTitle();
+	}
+	// The "Use default (...)" label depends on the global setting. Rebuild the menu bar after this
+	// handler returns rather than from inside it, since it deletes the menu that sent the event.
+	CallAfter([this]() { RecreateMenu(); });
 }
 
 void MainWindow::OnOpenFolder(wxCommandEvent& event)
@@ -1792,6 +1861,7 @@ void MainWindow::EndEmulation() // unfinished - memory leaks and crashes after r
 {
 	CafeSystem::ShutdownTitle();
 	DestroyCanvas();
+	LatteRenderTarget_setScreenLayoutOverride(-1); // the next game applies its own
 	m_game_launched = false;
 	m_launched_game_name.clear();
 	#ifdef ENABLE_DISCORD_RPC
@@ -2284,6 +2354,38 @@ void MainWindow::RecreateMenu()
 	optionsMenu->AppendSubMenu(m_optionsAccountMenu, _("&Active account"));
 	optionsMenu->AppendSubMenu(optionsConsoleLanguageMenu, _("&Console language"));
 	m_menuBar->Append(optionsMenu, _("&Options"));
+
+	// view menu
+	wxMenu* viewMenu = new wxMenu();
+	{
+		wxMenu* layoutMenu = new wxMenu();
+		const sint32 globalLayout = _GlobalScreenLayout();
+		auto appendGlobalItems = [globalLayout](wxMenu* menu) {
+			for (sint32 layout = 0; layout < kFullscreenScalingCount; layout++)
+				menu->AppendRadioItem(MAINFRAME_MENU_ID_VIEW_LAYOUT_GLOBAL_0 + layout, _ScreenLayoutName(layout))->Check(layout == globalLayout);
+		};
+		if (m_game_launched)
+		{
+			const auto& layouts = GetWxGUIConfig().screen_layouts;
+			const auto it = layouts.find(CafeSystem::GetForegroundTitleId());
+			const sint32 gameLayout = (it != layouts.end()) ? it->second : -1;
+			layoutMenu->Append(wxID_ANY, _("This game:"))->Enable(false);
+			layoutMenu->AppendRadioItem(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_DEFAULT, wxString::Format(_("Use default (%s)"), _ScreenLayoutName(globalLayout)))->Check(gameLayout < 0);
+			for (sint32 layout = 0; layout < kFullscreenScalingCount; layout++)
+				layoutMenu->AppendRadioItem(MAINFRAME_MENU_ID_VIEW_LAYOUT_GAME_0 + layout, _ScreenLayoutName(layout))->Check(layout == gameLayout);
+			layoutMenu->AppendSeparator();
+			wxMenu* globalMenu = new wxMenu();
+			appendGlobalItems(globalMenu);
+			layoutMenu->AppendSubMenu(globalMenu, _("&Default for all games"));
+		}
+		else
+		{
+			layoutMenu->Append(wxID_ANY, _("Default for all games:"))->Enable(false);
+			appendGlobalItems(layoutMenu);
+		}
+		viewMenu->AppendSubMenu(layoutMenu, _("&Screen Layout"));
+	}
+	m_menuBar->Append(viewMenu, _("&View"));
 
 	// tools submenu
 	wxMenu* toolsMenu = new wxMenu();

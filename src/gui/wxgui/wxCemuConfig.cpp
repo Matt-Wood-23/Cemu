@@ -132,6 +132,25 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 			settings.packs.emplace_back(value);
 	}
 
+	screen_layouts.clear();
+	auto layouts_parser = parser.get("ScreenLayouts");
+	for (auto element = layouts_parser.get("Entry"); element.valid(); element = layouts_parser.get("Entry", element))
+	{
+		// <titleId hex>|<layout>
+		const std::string entry = element.value("");
+		const size_t sep = entry.find('|');
+		if (sep == std::string::npos)
+			continue;
+		try
+		{
+			const uint64 titleId = std::stoull(entry.substr(0, sep), nullptr, 16);
+			const sint32 layout = std::stoi(entry.substr(sep + 1));
+			if (layout >= 0 && layout < kFullscreenScalingCount)
+				screen_layouts[titleId] = layout;
+		}
+		catch (const std::exception&) {}
+	}
+
 	// hotkeys
 	auto xml_hotkeys = parser.get("Hotkeys");
 	hotkeys.modifiers = xml_hotkeys.get("modifiers", sHotkeyCfg{});
@@ -216,6 +235,14 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 			const std::string packEntry = std::string(prefix) + "|pack|" + pack;
 			textures_parser.set("Entry", packEntry.c_str());
 		}
+	}
+
+	auto layouts_parser = config.set("ScreenLayouts");
+	for (const auto& [titleId, layout] : screen_layouts)
+	{
+		char entry[48];
+		snprintf(entry, sizeof(entry), "%016llx|%d", (unsigned long long)titleId, layout);
+		layouts_parser.set("Entry", entry);
 	}
 
 	// hotkeys

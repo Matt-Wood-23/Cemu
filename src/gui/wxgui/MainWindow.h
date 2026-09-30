@@ -149,6 +149,8 @@ private:
 	bool FullscreenEnabled() const;
 	void RecreateMenu();
 	void ApplyCustomTextureSettings();
+	void OnScreenLayoutMenu(wxCommandEvent& event);
+	void ApplyScreenLayoutForRunningTitle();
 	void UpdateChildWindowTitleRunningState();
 	static wxString GetInitialWindowTitle();
 
