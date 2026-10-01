@@ -1,5 +1,6 @@
 name: Build check
 on: 
+  workflow_dispatch:
   pull_request:
     paths-ignore:
       - "*.md"
@@ -12,7 +13,14 @@ on:
       - "*.md"
     branches:
       - main
+      - mh3u-revival
+      - game-mode
+
+permissions:
+  contents: read
+  packages: write # vcpkg caches built libraries in this repo's GitHub Packages
 
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+    secrets: inherit
