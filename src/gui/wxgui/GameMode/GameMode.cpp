@@ -134,8 +134,27 @@ namespace GameMode
 		}
 	}
 
+	bool GetSwapAB()
+	{
+		return GetWxGUIConfig().game_mode_swap_ab;
+	}
+
+	void SetSwapAB(bool swap)
+	{
+		GetWxGUIConfig().game_mode_swap_ab = swap;
+		g_wxConfig.Save();
+	}
+
 	Face FaceForNav(Nav nav)
 	{
+		// swapped: Accept sits on the player's B button and Back on their A button
+		if (GetSwapAB())
+		{
+			if (nav == Nav::Accept)
+				nav = Nav::Back;
+			else if (nav == Nav::Back)
+				nav = Nav::Accept;
+		}
 		// Cemu's default gamepad mapping is positional (Nintendo layout)
 		Face fallback = Face::East;
 		switch (nav)
@@ -254,6 +273,9 @@ namespace GameMode
 			now[(int)Nav::Options] |= Down(*controller, m.x);
 			now[(int)Nav::Settings] |= Down(*controller, m.y);
 		}
+
+		if (GetSwapAB())
+			std::swap(now[(int)Nav::Accept], now[(int)Nav::Back]);
 
 		const auto t = std::chrono::steady_clock::now();
 		for (int i = 0; i < kCount; i++)

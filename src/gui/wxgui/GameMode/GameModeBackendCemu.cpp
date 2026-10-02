@@ -2,6 +2,7 @@
 
 #include "wxgui/MainWindow.h"
 #include "wxgui/wxCemuConfig.h"
+#include "wxgui/wxHelper.h"
 #include "wxgui/input/HotkeySettings.h"
 
 #include "Cafe/Cheats/CheatManager.h"
@@ -21,6 +22,7 @@
 
 #include <wx/app.h>
 #include <wx/mstream.h>
+#include <wx/utils.h>
 
 #include <algorithm>
 #include <set>
@@ -330,6 +332,81 @@ std::optional<wxString> GameModeBackendCemu::SetCheatEnabled(uint64_t titleId, s
 	if (!CheatManager::Save(titleId, cheats, error))
 		return wxString::FromUTF8(error);
 	return std::nullopt;
+}
+
+std::optional<wxString> GameModeBackendCemu::AddCheat(uint64_t titleId, const wxString& name, const wxString& code)
+{
+	CheatManager::Cheat cheat;
+	cheat.name = wxString(name).Trim(true).Trim(false).utf8_string();
+	if (cheat.name.empty())
+		return _("The cheat needs a name");
+	// one code per line; whitespace is tidied so "0123abcd   00000001 " is stored as "0123ABCD 00000001"
+	for (wxString line : wxSplit(code, '\n', '\0'))
+	{
+		line.Replace("\t", " ");
+		line.Replace("\r", "");
+		wxString tidy;
+		for (const wxString& word : wxSplit(line, ' ', '\0'))
+		{
+			if (word.empty())
+				continue;
+			if (!tidy.empty())
+				tidy += ' ';
+			tidy += word.Upper();
+		}
+		if (!tidy.empty())
+			cheat.code.push_back(tidy.utf8_string());
+	}
+	if (cheat.code.empty())
+		return _("The cheat has no code");
+	std::string error;
+	if (!CheatManager::Validate(cheat, error))
+		return wxString::FromUTF8(error);
+	auto cheats = CheatManager::Load(titleId);
+	cheats.push_back(cheat);
+	m_cheatsCache.key = ~0ull;
+	if (!CheatManager::Save(titleId, cheats, error))
+		return wxString::FromUTF8(error);
+	return std::nullopt;
+}
+
+std::optional<wxString> GameModeBackendCemu::DeleteCheat(uint64_t titleId, size_t index)
+{
+	auto cheats = CheatManager::Load(titleId);
+	if (index >= cheats.size())
+		return std::nullopt;
+	cheats.erase(cheats.begin() + index);
+	m_cheatsCache.key = ~0ull;
+	std::string error;
+	if (!CheatManager::Save(titleId, cheats, error))
+		return wxString::FromUTF8(error);
+	return std::nullopt;
+}
+
+void GameModeBackendCemu::OpenCheatsFolder(uint64_t titleId)
+{
+	const fs::path folder = CheatManager::GetCheatFolder();
+	const fs::path file = CheatManager::GetCheatFile(titleId);
+	std::error_code ec;
+	fs::create_directories(folder, ec);
+	const bool hasFile = fs::exists(file, ec);
+#if BOOST_OS_WINDOWS
+	if (hasFile)
+	{
+		// Explorer with the game's cheat file selected
+		wxExecute(wxString::Format("explorer.exe /select,\"%s\"", wxHelper::FromPath(file.lexically_normal().make_preferred())), wxEXEC_ASYNC);
+		return;
+	}
+#elif BOOST_OS_MACOS
+	if (hasFile)
+	{
+		// Finder with the file selected
+		wxExecute(wxString::Format("open -R \"%s\"", wxHelper::FromPath(file)), wxEXEC_ASYNC);
+		return;
+	}
+#endif
+	// Linux file managers have no common way to select a file, so open the folder
+	wxLaunchDefaultApplication(wxHelper::FromPath(folder));
 }
 
 // ---- graphics ----
@@ -1000,6 +1077,16 @@ void GameModeBackendCemu::SetButtonStyle(GameMode::ButtonStyle style)
 {
 	GetWxGUIConfig().game_mode_buttons = (sint32)style;
 	SaveGuiConfig();
+}
+
+bool GameModeBackendCemu::GetSwapAB()
+{
+	return GameMode::GetSwapAB();
+}
+
+void GameModeBackendCemu::SetSwapAB(bool swap)
+{
+	GameMode::SetSwapAB(swap);
 }
 
 GameMode::Face GameModeBackendCemu::GetNavFace(GameMode::Nav nav)

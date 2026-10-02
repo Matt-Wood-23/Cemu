@@ -209,12 +209,14 @@ namespace GameMode
 			});
 		}
 
-		void ExitGame()
+		// Closes Cemu the same way File > Exit does. Stopping only the game and staying in Cemu
+		// is not offered: starting another game afterwards is not reliable.
+		void ExitCemu()
 		{
 			Close();
 			wxTheApp->CallAfter([]() {
-				if (g_mainFrame && g_mainFrame->IsGameLaunched())
-					g_mainFrame->EndEmulation();
+				if (g_mainFrame)
+					g_mainFrame->Close();
 			});
 		}
 
@@ -279,7 +281,7 @@ namespace GameMode
 				items.push_back(swap);
 
 				Item exit;
-				exit.label = U8(_("Exit game"));
+				exit.label = U8(_("Exit Cemu"));
 				exit.danger = true;
 				exit.activate = [&st]() {
 					st.page = Page::ConfirmExit;
@@ -329,9 +331,9 @@ namespace GameMode
 				};
 				items.push_back(cancel);
 				Item exit;
-				exit.label = U8(_("Exit game"));
+				exit.label = U8(_("Exit Cemu"));
 				exit.danger = true;
-				exit.activate = []() { ExitGame(); };
+				exit.activate = []() { ExitCemu(); };
 				items.push_back(exit);
 				break;
 			}
@@ -345,7 +347,7 @@ namespace GameMode
 			{
 			case Page::Layout: return U8(_("Screen layout"));
 			case Page::Cheats: return U8(_("Cheats"));
-			case Page::ConfirmExit: return U8(_("Exit game?"));
+			case Page::ConfirmExit: return U8(_("Exit Cemu?"));
 			default: return U8(_("Game Menu"));
 			}
 		}
@@ -586,7 +588,7 @@ namespace GameMode
 			// header
 			const float padX = 40 * s;
 			TextV(dl, titleSize, padX, 70 * s, kOnSurface, PageTitle());
-			TextV(dl, smallSize, padX, 118 * s, kOnSurfaceVariant, Ellipsize(smallSize, st.page == Page::ConfirmExit ? U8(_("Unsaved progress will be lost.")) : st.gameName, drawerW - padX * 2));
+			TextV(dl, smallSize, padX, 118 * s, kOnSurfaceVariant, Ellipsize(smallSize, st.page == Page::ConfirmExit ? U8(_("The game closes along with Cemu. Unsaved progress will be lost.")) : st.gameName, drawerW - padX * 2));
 
 			float y = 160 * s;
 			if (!st.message.empty())
@@ -597,7 +599,7 @@ namespace GameMode
 			if (st.page == Page::Cheats && items.empty())
 			{
 				TextV(dl, rowSize, padX, y + 40 * s, kOnSurface, U8(_("No cheats for this game")));
-				TextV(dl, smallSize, padX, y + 84 * s, kOnSurfaceVariant, Ellipsize(smallSize, U8(_("Add them from Tools > Cheats in the regular Cemu window.")), drawerW - padX * 2));
+				TextV(dl, smallSize, padX, y + 84 * s, kOnSurfaceVariant, Ellipsize(smallSize, U8(_("Add them from the game's options in Game Mode, or Tools > Cheats.")), drawerW - padX * 2));
 			}
 
 			// rows, scrolled so the focused one stays above the hint bar

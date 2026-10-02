@@ -1,5 +1,7 @@
 #include "GameModePanel.h"
 
+#include <wx/clipbrd.h>
+#include <wx/dataobj.h>
 #include <wx/dcbuffer.h>
 #include <wx/graphics.h>
 #include <wx/time.h>
@@ -198,6 +200,7 @@ GameModePanel::GameModePanel(wxWindow* parent, std::unique_ptr<GameMode::Backend
 	Bind(wxEVT_PAINT, &GameModePanel::OnPaint, this);
 	Bind(wxEVT_TIMER, &GameModePanel::OnTimer, this);
 	Bind(wxEVT_CHAR_HOOK, &GameModePanel::OnKeyDown, this);
+	Bind(wxEVT_CHAR, &GameModePanel::OnChar, this);
 	Bind(wxEVT_MOTION, &GameModePanel::OnMouseMove, this);
 	Bind(wxEVT_LEFT_DOWN, &GameModePanel::OnMouseDown, this);
 	Bind(wxEVT_RIGHT_DOWN, &GameModePanel::OnMouseDown, this);
@@ -394,15 +397,37 @@ GameModePanel::Page GameModePanel::MakeCheatsPage(uint64_t titleId)
 	GameMode::Backend* backend = m_backend.get();
 	page.build = [this, backend, titleId]() {
 		std::vector<Row> rows;
+		Row add;
+		add.kind = RowKind::Action;
+		add.label = _("Add cheat");
+		add.description = _("Type a name and the code");
+		add.action = [this, titleId]() { StartAddCheat(titleId, wxString(), wxString(), wxString()); };
+		rows.push_back(add);
+
+		Row folder;
+		folder.kind = RowKind::Action;
+		folder.label = _("Open cheats folder");
+		folder.description = _("Shows this game's cheat file in your file manager");
+		folder.action = [this, backend, titleId]() {
+			backend->OpenCheatsFolder(titleId);
+			ShowToast(_("Cheats folder opened in your file manager"));
+		};
+		rows.push_back(folder);
+
 		const auto cheats = backend->GetCheats(titleId);
 		if (cheats.empty())
 		{
 			Row info;
 			info.kind = RowKind::Info;
-			info.label = _("No cheats for this game");
-			info.description = _("Cheats are added from Tools > Cheats in the regular Cemu window.");
+			info.label = _("No cheats for this game yet");
+			info.description = _("Add one above, or put a cheat file in the cheats folder.");
 			rows.push_back(info);
+			return rows;
 		}
+		Row header;
+		header.kind = RowKind::Header;
+		header.label = wxString::Format(_("Cheats (%d)"), (int)cheats.size());
+		rows.push_back(header);
 		for (size_t i = 0; i < cheats.size(); i++)
 		{
 			Row row;
@@ -416,11 +441,62 @@ GameModePanel::Page GameModePanel::MakeCheatsPage(uint64_t titleId)
 				if (const auto error = backend->SetCheatEnabled(titleId, i, value))
 					ShowToast(*error);
 			};
+			const wxString name = cheats[i].name;
+			row.onOptions = [this, backend, titleId, i, name]() {
+				OpenConfirmDialog(_("Delete cheat?"), wxString::Format(_("\"%s\" will be removed."), name),
+					[this, backend, titleId, i, name]() {
+						if (const auto error = backend->DeleteCheat(titleId, i))
+							ShowToast(*error);
+						else
+							ShowToast(wxString::Format(_("Deleted \"%s\""), name));
+						RebuildCurrent();
+					});
+			};
+			row.optionsLabel = _("Delete");
 			rows.push_back(row);
 		}
 		return rows;
 	};
 	return page;
+}
+
+// A new cheat in two steps: its name, then its code. When the code does not parse, the code
+// keyboard comes back with what was typed and the reason, so nothing has to be typed again.
+void GameModePanel::StartAddCheat(uint64_t titleId, const wxString& name, const wxString& code, const wxString& error)
+{
+	auto askCode = [this, titleId](const wxString& name, const wxString& code, const wxString& error) {
+		OpenTextDialog(wxString::Format(_("Code for \"%s\""), name), _("One code per line, for example: 02123450 38A00000"), code, true,
+			[this, titleId, name](const wxString& code) {
+				if (const auto problem = m_backend->AddCheat(titleId, name, code))
+				{
+					StartAddCheat(titleId, name, code, *problem);
+					return;
+				}
+				ShowToast(wxString::Format(_("Added \"%s\". Switch it on in the list."), name));
+				RebuildCurrent();
+				Page& page = CurrentPage();
+				if (!page.rows.empty())
+					page.focus = (int)page.rows.size() - 1; // the new cheat is last
+			});
+		m_dialog.keyLayer = kUpper; // codes are hex: capitals and digits
+		m_dialog.hint = "02123450 38A00000";
+		m_dialog.error = error;
+	};
+	if (!name.empty())
+	{
+		askCode(name, code, error);
+		return;
+	}
+	OpenTextDialog(_("New cheat"), _("Name"), wxString(), false, [this, askCode](const wxString& typed) {
+		const wxString trimmed = wxString(typed).Trim(true).Trim(false);
+		if (trimmed.empty())
+		{
+			ShowToast(_("The cheat needs a name"));
+			return;
+		}
+		askCode(trimmed, wxString(), wxString());
+	});
+	m_dialog.hint = _("For example: Infinite health");
 }
 
 GameModePanel::Page GameModePanel::MakeSettingsPage()
@@ -473,6 +549,14 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 		};
 		buttons.setChoice = [this](int i) { m_backend->SetButtonStyle((GameMode::ButtonStyle)i); };
 		rows.push_back(buttons);
+
+		Row swap;
+		swap.kind = RowKind::Toggle;
+		swap.label = _("Swap A and B");
+		swap.description = _("In Game Mode menus only: B selects and A goes back. Games are not affected.");
+		swap.getBool = [this]() { return m_backend->GetSwapAB(); };
+		swap.setBool = [this](bool v) { m_backend->SetSwapAB(v); };
+		rows.push_back(swap);
 
 		Row exit;
 		exit.kind = RowKind::Action;
@@ -793,6 +877,184 @@ void GameModePanel::StartCapture(const wxString& title, const wxString& message,
 	Refresh();
 }
 
+void GameModePanel::OpenTextDialog(const wxString& title, const wxString& message, const wxString& initial, bool multiline,
+	std::function<void(const wxString&)> onText)
+{
+	m_dialog = Dialog{};
+	m_dialog.type = Dialog::Type::Text;
+	m_dialog.title = title;
+	m_dialog.message = message;
+	m_dialog.text = initial;
+	m_dialog.multiline = multiline;
+	m_dialog.onText = std::move(onText);
+	// start on the first letter
+	const auto keys = TextKeys();
+	for (size_t i = 0; i < keys.size(); i++)
+	{
+		if (keys[i].row == 1)
+		{
+			m_dialog.keyFocus = (int)i;
+			break;
+		}
+	}
+	Refresh();
+}
+
+// The keyboard: four rows of characters (letters, capitals or symbols) and two rows of special keys.
+std::vector<GameModePanel::Key> GameModePanel::TextKeys() const
+{
+	static const char* const kLowerRows[] = {"1234567890", "qwertyuiop", "asdfghjkl:", "zxcvbnm,.-"};
+	static const char* const kUpperRows[] = {"1234567890", "QWERTYUIOP", "ASDFGHJKL:", "ZXCVBNM,.-"};
+	static const char* const kSymbolRows[] = {"1234567890", "!@#$%^&*()", "-_=+[]{};:", "'\",./?<>\\|"};
+	const char* const* rows = m_dialog.keyLayer == kSymbols ? kSymbolRows : m_dialog.keyLayer == kUpper ? kUpperRows : kLowerRows;
+	std::vector<Key> keys;
+	for (int r = 0; r < 4; r++)
+	{
+		const wxString chars = wxString::FromUTF8(rows[r]);
+		for (size_t c = 0; c < chars.length(); c++)
+		{
+			Key key;
+			key.label = key.insert = chars.Mid(c, 1);
+			key.row = r;
+			key.x = (double)c;
+			keys.push_back(key);
+		}
+	}
+	auto special = [&](KeyAction action, const wxString& label, int row, double x, double w) {
+		Key key;
+		key.action = action;
+		key.label = label;
+		key.row = row;
+		key.x = x;
+		key.w = w;
+		keys.push_back(key);
+	};
+	special(KeyAction::Shift, m_dialog.keyLayer == kUpper ? _("abc") : _("ABC"), 4, 0, 1.5);
+	special(KeyAction::Symbols, m_dialog.keyLayer == kSymbols ? _("ABC") : "#+=", 4, 1.5, 1.5);
+	if (m_dialog.multiline)
+	{
+		special(KeyAction::Space, _("Space"), 4, 3, 3.5);
+		special(KeyAction::NewLine, _("New line"), 4, 6.5, 1.75);
+		special(KeyAction::Backspace, wxString::FromUTF8("\u232B"), 4, 8.25, 1.75);
+	}
+	else
+	{
+		special(KeyAction::Space, _("Space"), 4, 3, 5);
+		special(KeyAction::Backspace, wxString::FromUTF8("\u232B"), 4, 8, 2);
+	}
+	special(KeyAction::Paste, _("Paste"), 5, 0, 3);
+	special(KeyAction::Cancel, _("Cancel"), 5, 3, 3);
+	special(KeyAction::Done, _("Done"), 5, 6, 4);
+	return keys;
+}
+
+void GameModePanel::MoveTextFocus(Nav nav)
+{
+	const auto keys = TextKeys();
+	if (keys.empty())
+		return;
+	const int current = std::clamp(m_dialog.keyFocus, 0, (int)keys.size() - 1);
+	const Key& from = keys[current];
+	if (nav == Nav::Left || nav == Nav::Right)
+	{
+		// along the row, wrapping around at the ends
+		std::vector<int> row;
+		for (int i = 0; i < (int)keys.size(); i++)
+			if (keys[i].row == from.row)
+				row.push_back(i);
+		const int at = (int)(std::find(row.begin(), row.end(), current) - row.begin());
+		const int n = (int)row.size();
+		m_dialog.keyFocus = row[(at + (nav == Nav::Right ? 1 : n - 1)) % n];
+		return;
+	}
+	// up/down: the key in the next row nearest to this one's centre
+	const int lastRow = keys.back().row;
+	const int targetRow = from.row + (nav == Nav::Down ? 1 : -1);
+	if (targetRow < 0 || targetRow > lastRow)
+		return;
+	const double centre = from.x + from.w / 2;
+	int best = current;
+	double bestDistance = 1e9;
+	for (int i = 0; i < (int)keys.size(); i++)
+	{
+		if (keys[i].row != targetRow)
+			continue;
+		const double distance = std::abs(keys[i].x + keys[i].w / 2 - centre);
+		if (distance < bestDistance)
+		{
+			bestDistance = distance;
+			best = i;
+		}
+	}
+	m_dialog.keyFocus = best;
+}
+
+void GameModePanel::TypeText(const wxString& text)
+{
+	constexpr size_t kMaxLength = 8000;
+	wxString add = text;
+	add.Replace("\r\n", "\n");
+	add.Replace("\r", "\n");
+	if (!m_dialog.multiline)
+		add.Replace("\n", " ");
+	if (m_dialog.text.length() + add.length() > kMaxLength)
+		add = add.Left(kMaxLength - std::min(kMaxLength, m_dialog.text.length()));
+	m_dialog.text += add;
+	m_dialog.error.clear();
+}
+
+void GameModePanel::PressTextKey(KeyAction action, const wxString& insert)
+{
+	Dialog& d = m_dialog;
+	switch (action)
+	{
+	case KeyAction::Char:
+		TypeText(insert);
+		break;
+	case KeyAction::Shift:
+		d.keyLayer = d.keyLayer == kUpper ? kLower : kUpper;
+		break;
+	case KeyAction::Symbols:
+		d.keyLayer = d.keyLayer == kSymbols ? kLower : kSymbols;
+		break;
+	case KeyAction::Space:
+		TypeText(" ");
+		break;
+	case KeyAction::NewLine:
+		TypeText("\n");
+		break;
+	case KeyAction::Backspace:
+		if (!d.text.empty())
+			d.text.RemoveLast();
+		break;
+	case KeyAction::Paste:
+		if (wxTheClipboard->Open())
+		{
+			if (wxTheClipboard->IsSupported(wxDF_UNICODETEXT) || wxTheClipboard->IsSupported(wxDF_TEXT))
+			{
+				wxTextDataObject data;
+				if (wxTheClipboard->GetData(data))
+					TypeText(data.GetText());
+			}
+			wxTheClipboard->Close();
+		}
+		break;
+	case KeyAction::Cancel:
+		d = Dialog{};
+		break;
+	case KeyAction::Done:
+	{
+		auto onText = d.onText;
+		const wxString text = d.text;
+		d = Dialog{};
+		if (onText)
+			onText(text);
+		break;
+	}
+	}
+	Refresh();
+}
+
 void GameModePanel::StartGameMenuCapture()
 {
 	GameMode::Backend* b = m_backend.get();
@@ -1003,6 +1265,37 @@ void GameModePanel::HandleDialogNav(Nav nav)
 		// Buttons are being captured by the backend; only a key or the timeout ends it.
 		return;
 	}
+	if (d.type == Dialog::Type::Text)
+	{
+		// A types the focused key, B deletes (cancels once the text is empty), X space, Y done
+		switch (nav)
+		{
+		case Nav::Up:
+		case Nav::Down:
+		case Nav::Left:
+		case Nav::Right:
+			MoveTextFocus(nav);
+			break;
+		case Nav::Accept:
+		{
+			const auto keys = TextKeys();
+			if (d.keyFocus >= 0 && d.keyFocus < (int)keys.size())
+				PressTextKey(keys[d.keyFocus].action, keys[d.keyFocus].insert);
+			break;
+		}
+		case Nav::Back:
+			PressTextKey(d.text.empty() ? KeyAction::Cancel : KeyAction::Backspace);
+			break;
+		case Nav::Options:
+			PressTextKey(KeyAction::Space);
+			break;
+		case Nav::Settings:
+			PressTextKey(KeyAction::Done);
+			break;
+		}
+		Refresh();
+		return;
+	}
 	const bool horizontal = d.type == Dialog::Type::Confirm;
 	switch (nav)
 	{
@@ -1146,6 +1439,49 @@ void GameModePanel::OnKeyDown(wxKeyEvent& event)
 		}
 		return;
 	}
+	if (m_dialog.type == Dialog::Type::Text)
+	{
+		// a real keyboard types straight into the text; arrows still move over the on-screen keys
+		switch (key)
+		{
+		case WXK_ESCAPE:
+			PressTextKey(KeyAction::Cancel);
+			return;
+		case WXK_BACK:
+			PressTextKey(KeyAction::Backspace);
+			return;
+		case WXK_RETURN:
+		case WXK_NUMPAD_ENTER:
+			// multi-line: Enter is a new line, Ctrl+Enter finishes
+			PressTextKey(m_dialog.multiline && !event.ControlDown() && !event.CmdDown() ? KeyAction::NewLine : KeyAction::Done);
+			return;
+		case WXK_UP:
+		case WXK_NUMPAD_UP:
+			HandleNav(Nav::Up);
+			return;
+		case WXK_DOWN:
+		case WXK_NUMPAD_DOWN:
+			HandleNav(Nav::Down);
+			return;
+		case WXK_LEFT:
+		case WXK_NUMPAD_LEFT:
+			HandleNav(Nav::Left);
+			return;
+		case WXK_RIGHT:
+		case WXK_NUMPAD_RIGHT:
+			HandleNav(Nav::Right);
+			return;
+		default:
+			break;
+		}
+		if ((event.ControlDown() || event.CmdDown()) && key == 'V')
+		{
+			PressTextKey(KeyAction::Paste);
+			return;
+		}
+		event.Skip(); // the character arrives in OnChar
+		return;
+	}
 	switch (key)
 	{
 	case WXK_UP:
@@ -1184,6 +1520,23 @@ void GameModePanel::OnKeyDown(wxKeyEvent& event)
 	}
 }
 
+void GameModePanel::OnChar(wxKeyEvent& event)
+{
+	if (m_dialog.type != Dialog::Type::Text || event.ControlDown() || event.AltDown())
+	{
+		event.Skip();
+		return;
+	}
+	const wxChar c = event.GetUnicodeKey();
+	if (c == WXK_NONE || c < 32 || c == 127)
+	{
+		event.Skip();
+		return;
+	}
+	TypeText(wxString(c));
+	Refresh();
+}
+
 int GameModePanel::HitTest(const wxPoint& pos) const
 {
 	// last drawn wins (dialogs are drawn on top)
@@ -1204,6 +1557,15 @@ void GameModePanel::OnMouseMove(wxMouseEvent& event)
 	const int hit = HitTest(pos);
 	if (hit < 0)
 		return;
+	if (m_dialog.type == Dialog::Type::Text)
+	{
+		if (hit != m_dialog.keyFocus && hit < (int)TextKeys().size())
+		{
+			m_dialog.keyFocus = hit;
+			Refresh();
+		}
+		return;
+	}
 	if (m_dialog.type != Dialog::Type::None)
 	{
 		if (m_dialog.focus != hit && hit < (int)m_dialog.options.size())
@@ -1247,6 +1609,19 @@ void GameModePanel::OnMouseDown(wxMouseEvent& event)
 	if (hit == kHitSettingsChip)
 	{
 		HandleNav(Nav::Settings);
+		return;
+	}
+	if (m_dialog.type == Dialog::Type::Text)
+	{
+		// clicks outside do not throw away what was typed; Cancel does that
+		const auto keys = TextKeys();
+		if (right)
+			PressTextKey(KeyAction::Backspace);
+		else if (hit >= 0 && hit < (int)keys.size())
+		{
+			m_dialog.keyFocus = hit;
+			PressTextKey(keys[hit].action, keys[hit].insert);
+		}
 		return;
 	}
 	if (m_dialog.type != Dialog::Type::None)
@@ -1326,6 +1701,13 @@ std::vector<std::pair<Nav, wxString>> GameModePanel::CurrentHints() const
 {
 	if (m_dialog.type == Dialog::Type::Capture)
 		return {};
+	if (m_dialog.type == Dialog::Type::Text && m_backend->GetButtonStyle() == GameMode::ButtonStyle::Keyboard)
+	{
+		// typing on a real keyboard: X and Y are letters here, Enter and Esc finish or cancel
+		return {{Nav::Accept, m_dialog.multiline ? _("New line (Ctrl+Enter: Done)") : _("Done")}, {Nav::Back, _("Cancel")}};
+	}
+	if (m_dialog.type == Dialog::Type::Text)
+		return {{Nav::Accept, _("Type")}, {Nav::Back, m_dialog.text.empty() ? _("Cancel") : _("Delete")}, {Nav::Options, _("Space")}, {Nav::Settings, _("Done")}};
 	if (m_dialog.type != Dialog::Type::None)
 		return {{Nav::Accept, _("Select")}, {Nav::Back, _("Cancel")}};
 	const Page& page = m_pages.back();
@@ -1522,6 +1904,9 @@ void GameModePanel::Render(wxDC& dc)
 	DrawToast(gc.get(), content);
 	if (m_dialog.type != Dialog::Type::None)
 		DrawDialog(gc.get(), wxRect(wxPoint(0, 0), size));
+	// the keyboard's button hints (Type, Delete, Space, Done) stay readable over the scrim
+	if (m_dialog.type == Dialog::Type::Text)
+		DrawHints(gc.get(), hints);
 }
 
 void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
@@ -1861,6 +2246,11 @@ void GameModePanel::DrawDialog(wxGraphicsContext* gc, const wxRect& area)
 	gc->DrawRectangle(area.x, area.y, area.width, area.height);
 	m_hitRects.push_back({area, kHitOutsideDialog});
 
+	if (m_dialog.type == Dialog::Type::Text)
+	{
+		DrawTextDialog(gc, area);
+		return;
+	}
 	const Dialog& d = m_dialog;
 	const double w = std::min<double>(area.width - S(64), S(760));
 	const double pad = S(40);
@@ -1938,6 +2328,134 @@ void GameModePanel::DrawDialog(wxGraphicsContext* gc, const wxRect& area)
 			m_hitRects.push_back({wxRect((int)bx, (int)by, (int)bw, (int)bh), i});
 			bx -= S(16);
 		}
+	}
+}
+
+void GameModePanel::DrawTextDialog(wxGraphicsContext* gc, const wxRect& area)
+{
+	const Dialog& d = m_dialog;
+	const auto keys = TextKeys();
+	const int keyRows = keys.empty() ? 0 : keys.back().row + 1;
+	// fit between the top of the window and the hint bar, which stays visible above the scrim
+	const double hintH = S(92);
+	const double avail = area.height - hintH - S(24);
+	const double w = std::min<double>(area.width - S(48), S(1240));
+	const double pad = S(36);
+	const double gap = S(10);
+	double keyH = S(76);
+	const double lineH = S(40);
+	const int textLines = d.multiline ? 5 : 1;
+	const double boxH = textLines * lineH + S(28);
+	auto heightFor = [&](double kh) {
+		return pad + S(48) + (d.message.empty() ? 0 : S(44)) + (d.error.empty() ? 0 : S(40)) + S(12) + boxH + S(24) + keyRows * (kh + gap) - gap + pad;
+	};
+	if (heightFor(keyH) > avail)
+		keyH = std::max(S(40), keyH - (heightFor(keyH) - avail) / std::max(1, keyRows));
+	const double h = std::min(avail, heightFor(keyH));
+	const double x = area.x + (area.width - w) / 2;
+	const double y = area.y + std::max(S(12), (avail - h) / 2);
+	FillRounded(gc, x, y, w, h, S(28), kSurfaceHigh);
+	m_hitRects.push_back({wxRect((int)x, (int)y, (int)w, (int)h), kHitDialogCard});
+
+	double cy = y + pad + S(18);
+	gc->SetFont(MakeFont(S(34), true), kOnSurface);
+	DrawTextV(gc, Ellipsize(gc, d.title, w - pad * 2), x + pad, cy);
+	cy += S(30);
+	if (!d.message.empty())
+	{
+		gc->SetFont(MakeFont(S(24)), kOnSurfaceVariant);
+		DrawTextV(gc, Ellipsize(gc, d.message, w - pad * 2), x + pad, cy + S(22));
+		cy += S(44);
+	}
+	if (!d.error.empty())
+	{
+		gc->SetFont(MakeFont(S(24), true), kError);
+		DrawTextV(gc, Ellipsize(gc, d.error, w - pad * 2), x + pad, cy + S(20));
+		cy += S(40);
+	}
+	cy += S(12);
+
+	// the text box: the last lines that fit, the end of a long line, and a caret
+	const double bx = x + pad, bw = w - pad * 2, by = cy;
+	FillRounded(gc, bx, by, bw, boxH, S(16), kSurface);
+	StrokeRounded(gc, bx, by, bw, boxH, S(16), kPrimary, S(2));
+	const wxFont textFont = d.multiline ? wxFont(wxFontInfo(wxSize(0, std::max(6, (int)std::lround(S(28))))).Family(wxFONTFAMILY_TELETYPE)) : MakeFont(S(30));
+	const double innerW = bw - S(40);
+	if (d.text.empty())
+	{
+		gc->SetFont(textFont, WithAlpha(kOnSurfaceVariant, 140));
+		DrawTextV(gc, Ellipsize(gc, d.hint, innerW), bx + S(20), by + S(14) + lineH / 2);
+		gc->SetPen(*wxTRANSPARENT_PEN);
+		gc->SetBrush(wxBrush(kPrimary));
+		gc->DrawRectangle(bx + S(18), by + S(14) + S(4), S(3), lineH - S(8));
+	}
+	else
+	{
+		gc->SetFont(textFont, kOnSurface);
+		wxArrayString lines = wxSplit(d.text, '\n', '\0');
+		if (lines.empty())
+			lines.push_back(wxString());
+		const int first = std::max(0, (int)lines.size() - textLines);
+		double ly = by + S(14);
+		double caretX = bx + S(20), caretY = ly;
+		for (int i = first; i < (int)lines.size(); i++)
+		{
+			wxString line = lines[i];
+			// keep the end of the line in view
+			if (TextWidth(gc, line) > innerW - S(8))
+			{
+				const wxString ellipsis = wxString::FromUTF8("\u2026");
+				size_t cut = 0;
+				while (cut < line.length() && TextWidth(gc, ellipsis + line.Mid(cut)) > innerW - S(8))
+					cut++;
+				line = ellipsis + line.Mid(cut);
+			}
+			DrawTextV(gc, line, bx + S(20), ly + lineH / 2);
+			caretX = bx + S(20) + TextWidth(gc, line);
+			caretY = ly;
+			ly += lineH;
+		}
+		gc->SetPen(*wxTRANSPARENT_PEN);
+		gc->SetBrush(wxBrush(kPrimary));
+		gc->DrawRectangle(caretX + S(2), caretY + S(4), S(3), lineH - S(8));
+	}
+	cy = by + boxH + S(24);
+
+	// keys
+	const double unit = (bw + gap) / 10.0;
+	for (int i = 0; i < (int)keys.size(); i++)
+	{
+		const Key& key = keys[i];
+		const double kx = bx + key.x * unit;
+		const double ky = cy + key.row * (keyH + gap);
+		const double kw = key.w * unit - gap;
+		const bool focused = i == d.keyFocus;
+		const bool special = key.action != KeyAction::Char;
+		const bool active = (key.action == KeyAction::Shift && d.keyLayer == kUpper) || (key.action == KeyAction::Symbols && d.keyLayer == kSymbols);
+		wxColour fill = special ? kSurfaceHighest : kSurfaceLow;
+		wxColour text = kOnSurface;
+		if (key.action == KeyAction::Done)
+		{
+			fill = kPrimary;
+			text = kOnPrimary;
+		}
+		else if (active)
+		{
+			fill = kSecondaryContainer;
+			text = kOnSecondaryContainer;
+		}
+		if (focused && key.action != KeyAction::Done)
+		{
+			fill = kSecondaryContainer;
+			text = kOnSecondaryContainer;
+		}
+		FillRounded(gc, kx, ky, kw, keyH, S(14), fill);
+		if (focused)
+			StrokeRounded(gc, kx + S(1.5), ky + S(1.5), kw - S(3), keyH - S(3), S(14), key.action == KeyAction::Done ? kOnSurface : kPrimary, S(3));
+		gc->SetFont(MakeFont(special ? S(26) : S(32), special), text);
+		const wxString label = Ellipsize(gc, key.label, kw - S(12));
+		DrawTextV(gc, label, kx + (kw - TextWidth(gc, label)) / 2, ky + keyH / 2);
+		m_hitRects.push_back({wxRect((int)kx, (int)ky, (int)kw, (int)keyH), i});
 	}
 }
 

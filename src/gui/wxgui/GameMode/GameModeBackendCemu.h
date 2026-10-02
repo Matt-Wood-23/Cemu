@@ -37,6 +37,9 @@ public:
 	void SetTexturePackEnabled(uint64_t titleId, const wxString& pack, bool enabled) override;
 	std::vector<GameMode::NamedToggle> GetCheats(uint64_t titleId) override;
 	std::optional<wxString> SetCheatEnabled(uint64_t titleId, size_t index, bool enabled) override;
+	std::optional<wxString> AddCheat(uint64_t titleId, const wxString& name, const wxString& code) override;
+	std::optional<wxString> DeleteCheat(uint64_t titleId, size_t index) override;
+	void OpenCheatsFolder(uint64_t titleId) override;
 
 	GameMode::Choice GetGraphicsApi() override;
 	void SetGraphicsApi(int index) override;
@@ -82,6 +85,8 @@ public:
 	void SetAlwaysBootGameMode(bool enabled) override;
 	GameMode::ButtonStyle GetButtonStyle() override;
 	void SetButtonStyle(GameMode::ButtonStyle style) override;
+	bool GetSwapAB() override;
+	void SetSwapAB(bool swap) override;
 	GameMode::Face GetNavFace(GameMode::Nav nav) override;
 
 	void PollControllerNav(std::vector<GameMode::Nav>& out) override;

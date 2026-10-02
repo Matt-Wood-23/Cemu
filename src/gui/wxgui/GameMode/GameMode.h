@@ -39,11 +39,16 @@ namespace GameMode
 	ButtonStyle GetButtonStyle();
 	wxString ButtonStyleName(ButtonStyle style);
 	Face FaceForNav(Nav nav);
+	// "Swap A and B" (Game Mode menus only): B selects and A goes back. Games are not affected,
+	// they read the controllers through their own mapping.
+	bool GetSwapAB();
+	void SetSwapAB(bool swap);
 	// label printed on a face button: "A", "B", ... (PlayStation shapes are drawn, not printed)
 	wxString FaceLetter(ButtonStyle style, Face face);
 
 	// Menu navigation read from the players' emulated controllers, so every player's own button
 	// mapping applies ("A" is whatever they press for A in games). Directions repeat when held.
+	// With "Swap A and B" on, A and B trade places here (Accept on B, Back on A).
 	class ControllerNav
 	{
 	public:

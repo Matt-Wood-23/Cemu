@@ -17,9 +17,11 @@ class wxGraphicsContext;
 // needs no native focus handling, which is what makes it drivable by a controller alone.
 //
 // Screens: the game library, a per-game options page (play, favourite, screen layout, custom
-// textures, texture packs, cheats) and Settings (graphics, audio, input, exit Game Mode).
-// Navigation: D-pad/stick, A accept, B back, X game options, Y settings. Keyboard (arrows,
-// Enter, Esc/Backspace, X, Y) and mouse (hover, click, right-click, wheel) work too.
+// textures, texture packs, cheats: add, delete, open folder) and Settings (graphics, audio, input,
+// exit Game Mode). Text (a new cheat's name and code) is typed on an on-screen keyboard.
+// Navigation: D-pad/stick, A accept, B back, X game options, Y settings ("Swap A and B" trades
+// A and B in these menus only). Keyboard (arrows, Enter, Esc/Backspace, X, Y) and mouse (hover,
+// click, right-click, wheel) work too.
 class GameModePanel : public wxPanel
 {
 public:
@@ -90,7 +92,7 @@ private:
 
 	struct Dialog
 	{
-		enum class Type { None, Choice, Confirm, Capture } type = Type::None;
+		enum class Type { None, Choice, Confirm, Capture, Text } type = Type::None;
 		wxString title;
 		wxString message;
 		std::vector<wxString> options;
@@ -102,6 +104,26 @@ private:
 		std::function<bool()> poll;
 		std::function<bool(int, bool, bool, bool)> onKey;
 		std::function<void()> onDone;
+		// Text: an on-screen keyboard for controllers; a real keyboard types straight in.
+		wxString text;
+		wxString hint;  // shown greyed out while the text is empty
+		wxString error; // shown in red under the title
+		bool multiline = false;
+		int keyLayer = 0; // KeyLayer
+		int keyFocus = 0;
+		std::function<void(const wxString&)> onText; // Done
+	};
+
+	// on-screen keyboard
+	enum KeyLayer { kLower, kUpper, kSymbols };
+	enum class KeyAction { Char, Shift, Symbols, Space, NewLine, Backspace, Paste, Cancel, Done };
+	struct Key
+	{
+		KeyAction action = KeyAction::Char;
+		wxString label;
+		wxString insert;   // Char: the text it types
+		int row = 0;
+		double x = 0, w = 1; // in key widths, 10 per row
 	};
 
 	struct HitRect
@@ -135,6 +157,13 @@ private:
 
 	void OpenChoiceDialog(const wxString& title, const GameMode::Choice& choice, std::function<void(int)> onChoose);
 	void OpenConfirmDialog(const wxString& title, const wxString& message, std::function<void()> onYes);
+	void OpenTextDialog(const wxString& title, const wxString& message, const wxString& initial, bool multiline,
+		std::function<void(const wxString&)> onText);
+	std::vector<Key> TextKeys() const;
+	void MoveTextFocus(GameMode::Nav nav);
+	void PressTextKey(KeyAction action, const wxString& insert = wxString());
+	void TypeText(const wxString& text);
+	void StartAddCheat(uint64_t titleId, const wxString& name, const wxString& code, const wxString& error);
 	void StartGameMenuCapture();
 	void StartCapture(const wxString& title, const wxString& message, std::function<bool()> poll,
 		std::function<bool(int, bool, bool, bool)> onKey, std::function<void()> onDone);
@@ -149,6 +178,7 @@ private:
 	void DrawList(wxGraphicsContext* gc, Page& page, const wxRect& area);
 	void DrawRow(wxGraphicsContext* gc, const Row& row, const wxRect& rect, bool focused);
 	void DrawDialog(wxGraphicsContext* gc, const wxRect& area);
+	void DrawTextDialog(wxGraphicsContext* gc, const wxRect& area);
 	void DrawToast(wxGraphicsContext* gc, const wxRect& area);
 	void DrawIcon(wxGraphicsContext* gc, uint64_t titleId, const wxString& name, const wxRect& rect, double radius);
 	// the button behind a menu action, drawn in the chosen style (Nintendo, Xbox, PlayStation, Deck)
@@ -163,6 +193,7 @@ private:
 	// events
 	void OnTimer(wxTimerEvent& event);
 	void OnKeyDown(wxKeyEvent& event);
+	void OnChar(wxKeyEvent& event);
 	void OnMouseMove(wxMouseEvent& event);
 	void OnMouseDown(wxMouseEvent& event);
 	void OnMouseWheel(wxMouseEvent& event);

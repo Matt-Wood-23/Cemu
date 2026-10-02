@@ -32,6 +32,7 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 	game_mode = parser.get("game_mode", false);
 	game_mode_boot = parser.get("game_mode_boot", false);
 	game_mode_buttons = parser.get("game_mode_buttons", 0);
+	game_mode_swap_ab = parser.get("game_mode_swap_ab", false);
 	feral_gamemode = parser.get("feral_gamemode", false);
 	check_update = parser.get("check_update", check_update);
 	receive_untested_updates = parser.get("receive_untested_updates", receive_untested_updates);
@@ -181,6 +182,7 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 	config.set<bool>("game_mode", game_mode);
 	config.set<bool>("game_mode_boot", game_mode_boot);
 	config.set<sint32>("game_mode_buttons", game_mode_buttons);
+	config.set<bool>("game_mode_swap_ab", game_mode_swap_ab);
 	config.set<bool>("feral_gamemode", feral_gamemode);
 	config.set<bool>("check_update", check_update);
 	config.set<bool>("receive_untested_updates", receive_untested_updates);

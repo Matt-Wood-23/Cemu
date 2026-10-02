@@ -104,6 +104,13 @@ namespace GameMode
 		virtual std::vector<NamedToggle> GetCheats(uint64_t titleId) = 0;
 		// Returns an error message when the cheat could not be switched (e.g. invalid code).
 		virtual std::optional<wxString> SetCheatEnabled(uint64_t titleId, size_t index, bool enabled) = 0;
+		// Adds a cheat at the end of the title's list, switched off. code is one "XXXXXXXX YYYYYYYY"
+		// line per code line. Returns an error message (e.g. which line is invalid) when not added.
+		virtual std::optional<wxString> AddCheat(uint64_t titleId, const wxString& name, const wxString& code) = 0;
+		virtual std::optional<wxString> DeleteCheat(uint64_t titleId, size_t index) = 0;
+		// Shows the cheats folder in the system's file manager (Explorer, Finder, ...), with the
+		// title's cheat file selected where the platform supports that.
+		virtual void OpenCheatsFolder(uint64_t titleId) = 0;
 
 		// ---- graphics ----
 		virtual Choice GetGraphicsApi() = 0;
@@ -160,7 +167,10 @@ namespace GameMode
 		virtual void SetAlwaysBootGameMode(bool enabled) = 0;
 		virtual ButtonStyle GetButtonStyle() = 0;
 		virtual void SetButtonStyle(ButtonStyle style) = 0;
-		// Physical position of the button behind a menu action for player 1's mapping.
+		// Game Mode menus only: B selects and A goes back. Games keep their own mapping.
+		virtual bool GetSwapAB() = 0;
+		virtual void SetSwapAB(bool swap) = 0;
+		// Physical position of the button behind a menu action for player 1's mapping (after the swap).
 		virtual Face GetNavFace(Nav nav) = 0;
 
 		// ---- navigation ----
