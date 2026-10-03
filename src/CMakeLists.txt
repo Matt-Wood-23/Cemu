@@ -117,7 +117,7 @@ if (MACOS_BUNDLE)
 		RESOURCE "${RESOURCE_FILES}"
 	)
 
-	set(FOLDERS gameProfiles resources boot)
+	set(FOLDERS gameProfiles resources)
 	foreach(folder ${FOLDERS})
 		add_custom_command (TARGET CemuBin POST_BUILD
 			COMMAND ${CMAKE_COMMAND} ARGS -E copy_directory "${CMAKE_SOURCE_DIR}/bin/${folder}" "$<TARGET_BUNDLE_DIR:CemuBin>/Contents/SharedSupport/${folder}")

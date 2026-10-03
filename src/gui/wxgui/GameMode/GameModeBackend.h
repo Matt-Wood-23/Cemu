@@ -97,10 +97,9 @@ namespace GameMode
 
 	struct BootVideoInfo
 	{
-		bool supported = true;  // this build can play videos
-		bool found = false;     // boot/boot.mp4 or boot/boot.webm exists
-		bool hasBackup = false; // boot/boot.bak.mp4 exists
-		wxString fileName;      // the one that plays ("boot.mp4")
+		bool supported = true; // this build can play videos (and has the built-in one)
+		bool custom = false;   // boot/boot.mp4 or boot/boot.webm in the Cemu folder replaces the built-in video
+		wxString fileName;     // the custom one that plays ("boot.mp4"), when custom
 	};
 
 	class Backend
@@ -193,18 +192,20 @@ namespace GameMode
 		// Game Mode menus only: B selects and A goes back. Games keep their own mapping.
 		virtual bool GetSwapAB() = 0;
 		virtual void SetSwapAB(bool swap) = 0;
-		// Boot video: boot/boot.mp4 or boot/boot.webm in the Cemu folder, played before the
-		// launcher appears. boot/boot.bak.mp4 is the original, used by RestoreBootVideo.
+		// Boot video, played before the launcher appears: built into Cemu, unless the user puts
+		// boot/boot.mp4 or boot/boot.webm in the Cemu folder, which then plays instead.
 		virtual BootVideoInfo GetBootVideoInfo() = 0;
 		virtual bool GetBootVideoEnabled() = 0;
 		virtual void SetBootVideoEnabled(bool enabled) = 0;
-		// Copies boot.bak.mp4 over boot.mp4. Returns an error message on failure.
-		virtual std::optional<wxString> RestoreBootVideo() = 0;
-		// The video to play as Game Mode starts: only the first time per run, when enabled and found.
+		// Goes back to the built-in video: the custom boot.mp4 / boot.webm are renamed to
+		// boot.old.mp4 / boot.old.webm (not deleted). Returns an error message on failure.
+		virtual std::optional<wxString> UseBuiltInBootVideo() = 0;
+		// The video to play as Game Mode starts: only the first time per run, and when enabled.
 		virtual std::unique_ptr<VideoPlayer> TakeStartupBootVideo() = 0;
-		// Opens the boot video now (Preview). Null when it is missing or cannot be played.
+		// Opens the boot video now (Preview). Null when it cannot be played.
 		virtual std::unique_ptr<VideoPlayer> OpenBootVideo() = 0;
-		virtual void OpenCemuFolder() = 0;
+		// Opens boot/ in the Cemu folder in the file manager, creating it (with a README) if needed.
+		virtual void OpenBootFolder() = 0;
 		// Physical position of the button behind a menu action for player 1's mapping (after the swap).
 		virtual Face GetNavFace(Nav nav) = 0;
 

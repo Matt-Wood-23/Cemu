@@ -559,9 +559,11 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 		video.description = _("Plays before Game Mode opens");
 		video.getValueText = [this]() {
 			const auto info = m_backend->GetBootVideoInfo();
-			if (!info.supported || !info.found)
-				return wxString(_("Not found"));
-			return m_backend->GetBootVideoEnabled() ? wxString(_("On")) : wxString(_("Off"));
+			if (!info.supported)
+				return wxString(_("Not supported"));
+			if (!m_backend->GetBootVideoEnabled())
+				return wxString(_("Off"));
+			return info.custom ? wxString(_("Custom")) : wxString(_("On"));
 		};
 		video.action = [this]() { PushPage(MakeBootVideoPage()); };
 		rows.push_back(video);
@@ -597,18 +599,7 @@ GameModePanel::Page GameModePanel::MakeBootVideoPage()
 	page.build = [this, b]() {
 		std::vector<Row> rows;
 		const auto info = b->GetBootVideoInfo();
-		const bool usable = info.supported && info.found;
-		auto addFolder = [&]() {
-			Row folder;
-			folder.kind = RowKind::Action;
-			folder.label = _("Open Cemu folder");
-			folder.description = _("The boot video lives in its boot folder");
-			folder.action = [this, b]() {
-				b->OpenCemuFolder();
-				ShowToast(_("Cemu folder opened in your file manager"));
-			};
-			rows.push_back(folder);
-		};
+		const bool usable = info.supported;
 		if (!info.supported)
 		{
 			Row error;
@@ -618,27 +609,32 @@ GameModePanel::Page GameModePanel::MakeBootVideoPage()
 			error.description = _("Cemu was built without FFmpeg.");
 			rows.push_back(error);
 		}
-		else if (!info.found)
-		{
-			Row error;
-			error.kind = RowKind::Info;
-			error.danger = true;
-			error.label = _("Boot video or boot folder not found.");
-			error.description = _("Open Cemu folder and place boot.mp4 or boot.webm inside the boot folder.");
-			rows.push_back(error);
-		}
-		if (!usable)
-			addFolder(); // the one thing to do here, so it comes first
 
 		Row enabled;
 		enabled.kind = RowKind::Toggle;
 		enabled.label = _("Play boot video");
-		enabled.description = usable ? wxString::Format(_("Plays boot/%s from the Cemu folder when Cemu starts in Game Mode"), info.fileName)
-			: wxString(_("Plays boot/boot.mp4 or boot/boot.webm from the Cemu folder"));
+		enabled.description = _("Plays when Cemu starts in Game Mode. Any button skips it.");
 		enabled.getBool = [b, usable]() { return usable && b->GetBootVideoEnabled(); };
 		enabled.setBool = [b](bool v) { b->SetBootVideoEnabled(v); };
 		enabled.isEnabled = [usable]() { return usable; };
 		rows.push_back(enabled);
+
+		if (usable)
+		{
+			Row current;
+			current.kind = RowKind::Info;
+			if (info.custom)
+			{
+				current.label = wxString::Format(_("Playing your video: boot/%s"), info.fileName);
+				current.description = _("From the boot folder in the Cemu folder. Remove it, or use the built-in video below, to go back.");
+			}
+			else
+			{
+				current.label = _("Playing the built-in video");
+				current.description = _("To play your own, put boot.mp4 or boot.webm in the boot folder (Open boot folder below).");
+			}
+			rows.push_back(current);
+		}
 
 		Row preview;
 		preview.kind = RowKind::Action;
@@ -656,25 +652,34 @@ GameModePanel::Page GameModePanel::MakeBootVideoPage()
 		};
 		rows.push_back(preview);
 
-		Row restore;
-		restore.kind = RowKind::Action;
-		restore.label = _("Restore boot video");
-		restore.description = info.hasBackup ? _("Puts the original video (boot.bak.mp4) back as boot.mp4")
-			: _("No backup: boot.bak.mp4 is not in the boot folder");
-		restore.isEnabled = [info]() { return info.supported && info.hasBackup; };
-		restore.action = [this, b]() {
-			OpenConfirmDialog(_("Restore boot video?"), _("boot.mp4 is replaced with the original video."), [this, b]() {
-				if (const auto error = b->RestoreBootVideo())
+		Row builtIn;
+		builtIn.kind = RowKind::Action;
+		builtIn.label = _("Use built-in video");
+		builtIn.description = info.custom ? wxString::Format(_("Renames boot/%s to %s so the built-in video plays again"), info.fileName,
+												info.fileName == wxS("boot.webm") ? wxS("boot.old.webm") : wxS("boot.old.mp4"))
+			: wxString(_("The built-in video is already playing"));
+		builtIn.isEnabled = [info]() { return info.supported && info.custom; };
+		builtIn.action = [this, b]() {
+			OpenConfirmDialog(_("Use the built-in boot video?"), _("Your video is renamed (not deleted), so you can put it back later."), [this, b]() {
+				if (const auto error = b->UseBuiltInBootVideo())
 					ShowToast(*error);
 				else
-					ShowToast(_("Boot video restored"));
+					ShowToast(_("The built-in boot video plays again"));
 				RebuildCurrent();
 			});
 		};
-		rows.push_back(restore);
+		rows.push_back(builtIn);
 
-		if (usable)
-			addFolder();
+		Row folder;
+		folder.kind = RowKind::Action;
+		folder.label = _("Open boot folder");
+		folder.description = _("Put boot.mp4 or boot.webm here to replace the built-in video");
+		folder.isEnabled = [usable]() { return usable; };
+		folder.action = [this, b]() {
+			b->OpenBootFolder();
+			ShowToast(_("Boot folder opened in your file manager"));
+		};
+		rows.push_back(folder);
 		return rows;
 	};
 	return page;

@@ -197,6 +197,18 @@ endif()
 if(TARGET CemuFFmpeg)
 	target_link_libraries(CemuWxGui PRIVATE CemuFFmpeg)
 	target_compile_definitions(CemuWxGui PRIVATE CEMU_BOOT_VIDEO)
+	# the default boot video is built into Cemu; boot/boot.mp4 or boot/boot.webm in the Cemu folder replaces it
+	set(BOOT_VIDEO_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/GameMode/resources/boot.mp4")
+	set(BOOT_VIDEO_CPP "${CMAKE_CURRENT_BINARY_DIR}/BuiltInBootVideo.cpp")
+	add_custom_command(
+		OUTPUT "${BOOT_VIDEO_CPP}"
+		COMMAND ${CMAKE_COMMAND} -DINPUT=${BOOT_VIDEO_SOURCE} -DOUTPUT=${BOOT_VIDEO_CPP}
+			-DNAMESPACE=GameMode -DSYMBOL=BuiltInBootVideo -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+		DEPENDS "${BOOT_VIDEO_SOURCE}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+		COMMENT "Embedding the Game Mode boot video"
+		VERBATIM)
+	target_sources(CemuWxGui PRIVATE "${BOOT_VIDEO_CPP}")
+	set_source_files_properties("${BOOT_VIDEO_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 
 if(UNIX AND NOT APPLE)

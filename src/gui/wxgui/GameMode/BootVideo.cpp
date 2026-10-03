@@ -14,6 +14,23 @@ namespace GameMode
 		error = "this build of Cemu has no video support (built without FFmpeg)";
 		return nullptr;
 	}
+
+	std::unique_ptr<VideoPlayer> CreateVideoPlayer(const uint8_t*, size_t, std::unique_ptr<AudioSink>, std::string& error)
+	{
+		error = "this build of Cemu has no video support (built without FFmpeg)";
+		return nullptr;
+	}
+
+	// builds without FFmpeg do not carry the video
+	const uint8_t* BuiltInBootVideoData()
+	{
+		return nullptr;
+	}
+
+	size_t BuiltInBootVideoSize()
+	{
+		return 0;
+	}
 }
 
 #else
@@ -31,6 +48,7 @@ extern "C"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -60,9 +78,49 @@ namespace GameMode
 			std::vector<uint8_t> rgb;
 		};
 
+		// A video in memory (the one built into Cemu), read through a custom AVIOContext
+		struct MemoryInput
+		{
+			const uint8_t* data = nullptr;
+			size_t size = 0;
+			size_t pos = 0;
+
+			static int Read(void* opaque, uint8_t* buf, int bufSize)
+			{
+				auto* in = static_cast<MemoryInput*>(opaque);
+				const size_t n = std::min<size_t>((size_t)bufSize, in->size - in->pos);
+				if (n == 0)
+					return AVERROR_EOF;
+				std::memcpy(buf, in->data + in->pos, n);
+				in->pos += n;
+				return (int)n;
+			}
+
+			static int64_t Seek(void* opaque, int64_t offset, int whence)
+			{
+				auto* in = static_cast<MemoryInput*>(opaque);
+				int64_t base;
+				switch (whence & ~AVSEEK_FORCE)
+				{
+				case AVSEEK_SIZE: return (int64_t)in->size;
+				case SEEK_SET: base = 0; break;
+				case SEEK_CUR: base = (int64_t)in->pos; break;
+				case SEEK_END: base = (int64_t)in->size; break;
+				default: return -1;
+				}
+				const int64_t target = base + offset;
+				if (target < 0 || target > (int64_t)in->size)
+					return -1;
+				in->pos = (size_t)target;
+				return target;
+			}
+		};
+
 		// Everything FFmpeg, owned by the decode thread
 		struct Decoder
 		{
+			MemoryInput memory;
+			AVIOContext* io = nullptr; // only for a video in memory
 			AVFormatContext* format = nullptr;
 			AVCodecContext* video = nullptr;
 			AVCodecContext* audio = nullptr;
@@ -82,6 +140,11 @@ namespace GameMode
 				avcodec_free_context(&audio);
 				avcodec_free_context(&video);
 				avformat_close_input(&format);
+				if (io)
+				{
+					av_freep(&io->buffer);
+					avio_context_free(&io);
+				}
 			}
 		};
 
@@ -438,6 +501,49 @@ namespace GameMode
 		return true;
 	}
 
+	namespace
+	{
+		// The rest of opening, once d->format is open: streams and decoders.
+		std::unique_ptr<VideoPlayer> FinishOpening(std::unique_ptr<Decoder> d, const std::string& name, std::unique_ptr<AudioSink> audio, std::string& error)
+		{
+			int result = avformat_find_stream_info(d->format, nullptr);
+			if (result < 0)
+			{
+				error = "cannot read " + name + ": " + AvError(result);
+				return nullptr;
+			}
+			d->videoStream = av_find_best_stream(d->format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+			if (d->videoStream < 0)
+			{
+				error = name + " has no video";
+				return nullptr;
+			}
+			d->video = OpenDecoder(d->format->streams[d->videoStream], error);
+			if (!d->video)
+				return nullptr;
+			if (audio)
+			{
+				d->audioStream = av_find_best_stream(d->format, AVMEDIA_TYPE_AUDIO, -1, d->videoStream, nullptr, 0);
+				if (d->audioStream >= 0)
+				{
+					std::string audioError;
+					d->audio = OpenDecoder(d->format->streams[d->audioStream], audioError);
+					if (!d->audio)
+						error = audioError; // plays without sound
+				}
+			}
+			// the decoder only reads the streams it uses
+			for (unsigned i = 0; i < d->format->nb_streams; i++)
+			{
+				if ((int)i != d->videoStream && !(d->audio && (int)i == d->audioStream))
+					d->format->streams[i]->discard = AVDISCARD_ALL;
+			}
+			if (!d->audio)
+				audio.reset();
+			return std::make_unique<FFmpegVideoPlayer>(std::move(d), std::move(audio));
+		}
+	}
+
 	std::unique_ptr<VideoPlayer> CreateVideoPlayer(const std::filesystem::path& file, std::unique_ptr<AudioSink> audio, std::string& error)
 	{
 		av_log_set_level(AV_LOG_ERROR); // FFmpeg would otherwise chatter on the console
@@ -450,41 +556,45 @@ namespace GameMode
 			error = "cannot open " + path + ": " + AvError(result);
 			return nullptr;
 		}
-		result = avformat_find_stream_info(d->format, nullptr);
+		return FinishOpening(std::move(d), path, std::move(audio), error);
+	}
+
+	std::unique_ptr<VideoPlayer> CreateVideoPlayer(const uint8_t* data, size_t size, std::unique_ptr<AudioSink> audio, std::string& error)
+	{
+		av_log_set_level(AV_LOG_ERROR);
+		const std::string name = "the built-in boot video";
+		if (!data || size == 0)
+		{
+			error = name + " is missing from this build";
+			return nullptr;
+		}
+		auto d = std::make_unique<Decoder>();
+		d->memory = MemoryInput{data, size, 0};
+		constexpr int kBufferSize = 64 * 1024;
+		auto* buffer = static_cast<uint8_t*>(av_malloc(kBufferSize));
+		if (buffer)
+			d->io = avio_alloc_context(buffer, kBufferSize, 0, &d->memory, &MemoryInput::Read, nullptr, &MemoryInput::Seek);
+		if (!d->io)
+		{
+			av_free(buffer);
+			error = "out of memory";
+			return nullptr;
+		}
+		d->format = avformat_alloc_context();
+		if (!d->format)
+		{
+			error = "out of memory";
+			return nullptr;
+		}
+		d->format->pb = d->io;
+		d->format->flags |= AVFMT_FLAG_CUSTOM_IO;
+		int result = avformat_open_input(&d->format, nullptr, nullptr, nullptr); // frees format on failure
 		if (result < 0)
 		{
-			error = "cannot read " + path + ": " + AvError(result);
+			error = "cannot open " + name + ": " + AvError(result);
 			return nullptr;
 		}
-		d->videoStream = av_find_best_stream(d->format, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
-		if (d->videoStream < 0)
-		{
-			error = path + " has no video";
-			return nullptr;
-		}
-		d->video = OpenDecoder(d->format->streams[d->videoStream], error);
-		if (!d->video)
-			return nullptr;
-		if (audio)
-		{
-			d->audioStream = av_find_best_stream(d->format, AVMEDIA_TYPE_AUDIO, -1, d->videoStream, nullptr, 0);
-			if (d->audioStream >= 0)
-			{
-				std::string audioError;
-				d->audio = OpenDecoder(d->format->streams[d->audioStream], audioError);
-				if (!d->audio)
-					error = audioError; // plays without sound
-			}
-		}
-		// the decoder only reads the streams it uses
-		for (unsigned i = 0; i < d->format->nb_streams; i++)
-		{
-			if ((int)i != d->videoStream && !(d->audio && (int)i == d->audioStream))
-				d->format->streams[i]->discard = AVDISCARD_ALL;
-		}
-		if (!d->audio)
-			audio.reset();
-		return std::make_unique<FFmpegVideoPlayer>(std::move(d), std::move(audio));
+		return FinishOpening(std::move(d), name, std::move(audio), error);
 	}
 }
 

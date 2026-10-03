@@ -148,7 +148,7 @@ endif()
 option(ENABLE_CUBEB "Enabled cubeb backend" ON)
 
 option(ENABLE_WXWIDGETS "Build with wxWidgets UI (Currently required)" ON)
-option(ENABLE_BOOT_VIDEO "Game Mode boot video: plays boot/boot.mp4 or boot/boot.webm (needs FFmpeg)" ON)
+option(ENABLE_BOOT_VIDEO "Game Mode boot video: built in, replaceable with boot/boot.mp4 or boot/boot.webm (needs FFmpeg)" ON)
 
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)

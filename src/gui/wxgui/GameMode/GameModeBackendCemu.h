@@ -91,10 +91,10 @@ public:
 	GameMode::BootVideoInfo GetBootVideoInfo() override;
 	bool GetBootVideoEnabled() override;
 	void SetBootVideoEnabled(bool enabled) override;
-	std::optional<wxString> RestoreBootVideo() override;
+	std::optional<wxString> UseBuiltInBootVideo() override;
 	std::unique_ptr<GameMode::VideoPlayer> TakeStartupBootVideo() override;
 	std::unique_ptr<GameMode::VideoPlayer> OpenBootVideo() override;
-	void OpenCemuFolder() override;
+	void OpenBootFolder() override;
 
 	void PollControllerNav(std::vector<GameMode::Nav>& out) override;
 	void ExitGameMode() override;
@@ -109,7 +109,6 @@ private:
 	void WriteTextureSettings(uint64_t titleId, const TextureSettings& settings);
 	std::vector<std::shared_ptr<ControllerBase>> AllControllers();
 	void IconWorker();
-	void InstallDefaultBootVideo();
 
 	// The launcher redraws often and several rows show values that live on disk (pack folders,
 	// cheat files, controller profiles). Those reads are cached briefly; writes drop the cache.
