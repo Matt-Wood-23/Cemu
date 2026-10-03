@@ -1,4 +1,5 @@
 #include "wxgui/GameMode/GameModeBackendCemu.h"
+#include "wxgui/GameMode/BootVideo.h"
 
 #include "wxgui/MainWindow.h"
 #include "wxgui/wxCemuConfig.h"
@@ -11,6 +12,7 @@
 #include "Cafe/TitleList/GameInfo.h"
 #include "Cafe/TitleList/TitleList.h"
 #include "audio/IAudioAPI.h"
+#include "config/ActiveSettings.h"
 #include "config/CemuConfig.h"
 #include "input/InputManager.h"
 #include "input/api/Controller.h"
@@ -25,6 +27,7 @@
 #include <wx/utils.h>
 
 #include <algorithm>
+#include <fstream>
 #include <set>
 
 using GameMode::Choice;
@@ -67,6 +70,7 @@ namespace
 GameModeBackendCemu::GameModeBackendCemu(MainWindow* mainWindow)
 	: m_mainWindow(mainWindow)
 {
+	InstallDefaultBootVideo();
 	m_iconThread = std::thread(&GameModeBackendCemu::IconWorker, this);
 }
 
@@ -1077,6 +1081,195 @@ void GameModeBackendCemu::SetButtonStyle(GameMode::ButtonStyle style)
 {
 	GetWxGUIConfig().game_mode_buttons = (sint32)style;
 	SaveGuiConfig();
+}
+
+// ---- boot video ----
+
+namespace
+{
+	// boot/ in the Cemu folder (File > Open Cemu folder), where people can put their own video
+	fs::path BootFolder()
+	{
+		return ActiveSettings::GetUserDataPath("boot");
+	}
+
+	// boot.mp4 or boot.webm; if both are there, the newer one (the one just put in) plays
+	fs::path FindBootVideo()
+	{
+		std::error_code ec;
+		fs::path best;
+		fs::file_time_type bestTime{};
+		for (const char* name : {"boot.mp4", "boot.webm"})
+		{
+			const fs::path file = BootFolder() / name;
+			if (!fs::is_regular_file(file, ec))
+				continue;
+			const auto time = fs::last_write_time(file, ec);
+			if (best.empty() || (!ec && time > bestTime))
+			{
+				best = file;
+				bestTime = time;
+			}
+		}
+		return best;
+	}
+
+	// The video shipped with Cemu: boot/ next to resources/ and gameProfiles/
+	fs::path BundledBootVideo()
+	{
+		std::error_code ec;
+		for (const fs::path& file : {ActiveSettings::GetDataPath("boot/boot.mp4"), ActiveSettings::GetExecutablePath().parent_path() / "boot" / "boot.mp4"})
+		{
+			if (fs::is_regular_file(file, ec))
+				return file;
+		}
+		return {};
+	}
+
+	// Plays the video's sound on the TV output, at the TV volume, like a game would
+	class CemuAudioSink : public GameMode::AudioSink
+	{
+	public:
+		static std::unique_ptr<CemuAudioSink> Create()
+		{
+			auto sink = std::unique_ptr<CemuAudioSink>(new CemuAudioSink());
+			try
+			{
+				sink->m_device = IAudioAPI::CreateDeviceFromConfig(IAudioAPI::TV, kRate, 2, kBlock, 16);
+			}
+			catch (const std::exception& e)
+			{
+				cemuLog_log(LogType::Force, "Boot video: no sound ({})", e.what());
+			}
+			if (!sink->m_device)
+				return nullptr;
+			return sink;
+		}
+		~CemuAudioSink() override
+		{
+			if (m_device)
+				m_device->Stop();
+		}
+		int SampleRate() const override { return kRate; }
+		int BlockFrames() const override { return kBlock; }
+		bool WantsBlock() override { return m_device->NeedAdditionalBlocks(); }
+		void FeedBlock(const int16_t* stereo) override { m_device->FeedBlock((sint16*)stereo); }
+		void Start() override { m_device->Play(); }
+
+	private:
+		CemuAudioSink() = default;
+		static constexpr int kRate = 48000;
+		static constexpr int kBlock = 1024;
+		AudioAPIPtr m_device;
+	};
+
+	bool s_startupVideoTaken = false;
+}
+
+// The first time Game Mode runs, the bundled video goes into the Cemu folder as boot.mp4, with
+// boot.bak.mp4 next to it for "Restore boot video". Only once: if the folder is removed later,
+// Game Mode starts without a video and Settings says where it is missing.
+void GameModeBackendCemu::InstallDefaultBootVideo()
+{
+	auto& config = GetWxGUIConfig();
+	if (config.game_mode_boot_video_installed)
+		return;
+	const fs::path bundled = BundledBootVideo();
+	if (bundled.empty())
+		return; // a build without the video; try again with one that has it
+	std::error_code ec;
+	const fs::path folder = BootFolder();
+	fs::create_directories(folder, ec);
+	if (!fs::exists(folder / "boot.mp4", ec) && !fs::exists(folder / "boot.webm", ec))
+		fs::copy_file(bundled, folder / "boot.mp4", ec);
+	if (!fs::exists(folder / "boot.bak.mp4", ec))
+		fs::copy_file(bundled, folder / "boot.bak.mp4", ec);
+	if (!ec && !fs::exists(folder / "README.txt", ec))
+	{
+		std::ofstream readme(folder / "README.txt");
+		readme << "Game Mode boot video\n"
+				  "====================\n\n"
+				  "boot.mp4 (or boot.webm) in this folder plays when Cemu starts in Game Mode.\n"
+				  "To use your own video, replace boot.mp4 with it, or put a boot.webm here: when both\n"
+				  "exist, the newer file plays. Any button skips the video.\n\n"
+				  "Supported: MP4 (H.264, H.265) and WebM (VP8, VP9), with AAC, Opus or Vorbis sound.\n\n"
+				  "boot.bak.mp4 is the original video. Game Mode > Settings > Boot video > Restore boot video\n"
+				  "copies it back to boot.mp4. The video can be switched off there as well.\n";
+	}
+	if (ec)
+	{
+		cemuLog_log(LogType::Force, "Boot video: cannot copy it to {}: {}", _pathToUtf8(folder), ec.message());
+		return;
+	}
+	config.game_mode_boot_video_installed = true;
+	SaveGuiConfig();
+}
+
+GameMode::BootVideoInfo GameModeBackendCemu::GetBootVideoInfo()
+{
+	GameMode::BootVideoInfo info;
+	info.supported = GameMode::IsVideoPlaybackSupported();
+	const fs::path video = FindBootVideo();
+	info.found = !video.empty();
+	if (info.found)
+		info.fileName = wxHelper::FromPath(video.filename());
+	std::error_code ec;
+	info.hasBackup = fs::is_regular_file(BootFolder() / "boot.bak.mp4", ec);
+	return info;
+}
+
+bool GameModeBackendCemu::GetBootVideoEnabled()
+{
+	return GetWxGUIConfig().game_mode_boot_video;
+}
+
+void GameModeBackendCemu::SetBootVideoEnabled(bool enabled)
+{
+	GetWxGUIConfig().game_mode_boot_video = enabled;
+	SaveGuiConfig();
+}
+
+std::optional<wxString> GameModeBackendCemu::RestoreBootVideo()
+{
+	const fs::path folder = BootFolder();
+	const fs::path backup = folder / "boot.bak.mp4";
+	std::error_code ec;
+	if (!fs::is_regular_file(backup, ec))
+		return _("There is no boot.bak.mp4 in the boot folder");
+	fs::copy_file(backup, folder / "boot.mp4", fs::copy_options::overwrite_existing, ec);
+	if (ec)
+		return wxString::Format(_("Could not restore the boot video: %s"), wxString::FromUTF8(ec.message()));
+	// newest wins over a boot.webm put there earlier (copying may keep the backup's old date)
+	fs::last_write_time(folder / "boot.mp4", fs::file_time_type::clock::now(), ec);
+	return std::nullopt;
+}
+
+std::unique_ptr<GameMode::VideoPlayer> GameModeBackendCemu::TakeStartupBootVideo()
+{
+	// Game Mode is also rebuilt after a game closes; the video belongs to Cemu starting up
+	if (s_startupVideoTaken)
+		return nullptr;
+	s_startupVideoTaken = true;
+	if (!GetBootVideoEnabled())
+		return nullptr;
+	return OpenBootVideo();
+}
+
+std::unique_ptr<GameMode::VideoPlayer> GameModeBackendCemu::OpenBootVideo()
+{
+	const fs::path video = FindBootVideo();
+	if (video.empty())
+		return nullptr;
+	std::string error;
+	auto player = GameMode::CreateVideoPlayer(video, CemuAudioSink::Create(), error);
+	if (!error.empty())
+		cemuLog_log(LogType::Force, "Boot video: {}", error);
+	return player;
+}
+
+void GameModeBackendCemu::OpenCemuFolder()
+{
+	wxLaunchDefaultApplication(wxHelper::FromPath(ActiveSettings::GetUserDataPath()));
 }
 
 bool GameModeBackendCemu::GetSwapAB()

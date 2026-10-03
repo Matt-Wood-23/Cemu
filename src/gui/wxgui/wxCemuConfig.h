@@ -84,6 +84,8 @@ struct wxCemuConfig
 	ConfigValue<bool> game_mode_boot{false}; // start in Game Mode even after leaving it
 	ConfigValue<sint32> game_mode_buttons{0}; // GameMode::ButtonStyle of the button hints
 	ConfigValue<bool> game_mode_swap_ab{false}; // Game Mode menus: B selects, A goes back (games unaffected)
+	ConfigValue<bool> game_mode_boot_video{true}; // play boot/boot.mp4 (or .webm) before Game Mode opens
+	ConfigValue<bool> game_mode_boot_video_installed{false}; // the bundled boot video was copied to the Cemu folder once
 	ConfigValue<bool> feral_gamemode{false};
 
 	// max 15 entries

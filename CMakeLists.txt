@@ -148,6 +148,7 @@ endif()
 option(ENABLE_CUBEB "Enabled cubeb backend" ON)
 
 option(ENABLE_WXWIDGETS "Build with wxWidgets UI (Currently required)" ON)
+option(ENABLE_BOOT_VIDEO "Game Mode boot video: plays boot/boot.mp4 or boot/boot.webm (needs FFmpeg)" ON)
 
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
@@ -234,6 +235,33 @@ endif()
 
 if (ENABLE_WXWIDGETS)
 	find_package(wxWidgets 3.3 REQUIRED COMPONENTS base core gl propgrid xrc)
+endif()
+
+# FFmpeg for the Game Mode boot video. vcpkg builds it (see vcpkg.json) and provides FindFFMPEG;
+# other builds use the system's FFmpeg 5.1 or newer through pkg-config. Without it Cemu still
+# builds, and Game Mode says that boot videos are not supported.
+if (ENABLE_BOOT_VIDEO)
+	find_package(FFMPEG QUIET)
+	if (FFMPEG_FOUND)
+		add_library(CemuFFmpeg INTERFACE)
+		target_include_directories(CemuFFmpeg INTERFACE ${FFMPEG_INCLUDE_DIRS})
+		target_link_directories(CemuFFmpeg INTERFACE ${FFMPEG_LIBRARY_DIRS})
+		target_link_libraries(CemuFFmpeg INTERFACE ${FFMPEG_LIBRARIES})
+	else()
+		find_package(PkgConfig QUIET)
+		if (PKG_CONFIG_FOUND)
+			pkg_check_modules(CEMU_FFMPEG_PC IMPORTED_TARGET libavformat>=59.27 libavcodec libavutil libswscale libswresample)
+		endif()
+		if (CEMU_FFMPEG_PC_FOUND)
+			add_library(CemuFFmpeg INTERFACE)
+			target_link_libraries(CemuFFmpeg INTERFACE PkgConfig::CEMU_FFMPEG_PC)
+		endif()
+	endif()
+	if (TARGET CemuFFmpeg)
+		message(STATUS "Game Mode boot video: enabled")
+	else()
+		message(WARNING "Game Mode boot video: FFmpeg not found, building without boot video support")
+	endif()
 endif()
 
 if (ENABLE_CUBEB)

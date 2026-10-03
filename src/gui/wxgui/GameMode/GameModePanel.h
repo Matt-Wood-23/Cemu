@@ -150,6 +150,7 @@ private:
 	Page MakeTexturePacksPage(uint64_t titleId);
 	Page MakeCheatsPage(uint64_t titleId);
 	Page MakeSettingsPage();
+	Page MakeBootVideoPage();
 	Page MakeGraphicsPage();
 	Page MakeAudioPage();
 	Page MakeInputPage();
@@ -168,6 +169,11 @@ private:
 	void StartCapture(const wxString& title, const wxString& message, std::function<bool()> poll,
 		std::function<bool(int, bool, bool, bool)> onKey, std::function<void()> onDone);
 	void ShowToast(const wxString& message);
+
+	// boot video: shown full-window instead of the launcher until it ends or a button skips it
+	void PlayVideo(std::unique_ptr<GameMode::VideoPlayer> video);
+	void EndVideo();
+	void DrawVideo(wxGraphicsContext* gc, const wxSize& size);
 
 	// drawing
 	double S(double v) const { return v * m_scale; }
@@ -214,6 +220,11 @@ private:
 
 	std::map<uint64_t, wxImage> m_icons;
 	std::map<std::pair<uint64_t, int>, wxBitmap> m_iconCache;
+
+	std::unique_ptr<GameMode::VideoPlayer> m_video;
+	wxBitmap m_videoFrame;
+	wxLongLong m_videoStartMs = 0;
+	wxLongLong m_fadeInStartMs = 0; // the launcher fades in after the video
 
 	wxString m_toast;
 	wxLongLong m_toastUntilMs = 0;

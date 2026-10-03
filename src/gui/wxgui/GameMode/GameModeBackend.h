@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -78,6 +79,28 @@ namespace GameMode
 	{
 		std::vector<wxString> options;
 		int selected = 0;
+	};
+
+	// A video being played (the boot video). Frames are pulled by the UI thread while it paints.
+	class VideoPlayer
+	{
+	public:
+		virtual ~VideoPlayer() = default;
+		// The area the video is shown in; frames are scaled to fit inside it.
+		virtual void SetOutputSize(int width, int height) = 0;
+		// Fills image when a new frame is due. The first frame starts the clock and the sound,
+		// so a video only begins once it is actually on screen.
+		virtual bool TakeFrame(wxImage& image) = 0;
+		// Played to the end, or could not be played.
+		virtual bool IsFinished() = 0;
+	};
+
+	struct BootVideoInfo
+	{
+		bool supported = true;  // this build can play videos
+		bool found = false;     // boot/boot.mp4 or boot/boot.webm exists
+		bool hasBackup = false; // boot/boot.bak.mp4 exists
+		wxString fileName;      // the one that plays ("boot.mp4")
 	};
 
 	class Backend
@@ -170,6 +193,18 @@ namespace GameMode
 		// Game Mode menus only: B selects and A goes back. Games keep their own mapping.
 		virtual bool GetSwapAB() = 0;
 		virtual void SetSwapAB(bool swap) = 0;
+		// Boot video: boot/boot.mp4 or boot/boot.webm in the Cemu folder, played before the
+		// launcher appears. boot/boot.bak.mp4 is the original, used by RestoreBootVideo.
+		virtual BootVideoInfo GetBootVideoInfo() = 0;
+		virtual bool GetBootVideoEnabled() = 0;
+		virtual void SetBootVideoEnabled(bool enabled) = 0;
+		// Copies boot.bak.mp4 over boot.mp4. Returns an error message on failure.
+		virtual std::optional<wxString> RestoreBootVideo() = 0;
+		// The video to play as Game Mode starts: only the first time per run, when enabled and found.
+		virtual std::unique_ptr<VideoPlayer> TakeStartupBootVideo() = 0;
+		// Opens the boot video now (Preview). Null when it is missing or cannot be played.
+		virtual std::unique_ptr<VideoPlayer> OpenBootVideo() = 0;
+		virtual void OpenCemuFolder() = 0;
 		// Physical position of the button behind a menu action for player 1's mapping (after the swap).
 		virtual Face GetNavFace(Nav nav) = 0;
 

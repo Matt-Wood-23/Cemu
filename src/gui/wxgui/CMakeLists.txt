@@ -52,6 +52,8 @@ add_library(CemuWxGui STATIC
   DownloadGraphicPacksWindow.h
   DownloadCustomGraphicPackWindow.cpp
   DownloadCustomGraphicPackWindow.h
+  GameMode/BootVideo.cpp
+  GameMode/BootVideo.h
   GameMode/GameMenuOverlay.cpp
   GameMode/GameMode.cpp
   GameMode/GameMode.h
@@ -190,6 +192,11 @@ endif()
 
 if(ENABLE_SDL)
 	target_link_libraries(CemuWxGui PRIVATE SDL3::SDL3)
+endif()
+
+if(TARGET CemuFFmpeg)
+	target_link_libraries(CemuWxGui PRIVATE CemuFFmpeg)
+	target_compile_definitions(CemuWxGui PRIVATE CEMU_BOOT_VIDEO)
 endif()
 
 if(UNIX AND NOT APPLE)

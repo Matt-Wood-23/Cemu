@@ -207,6 +207,9 @@ GameModePanel::GameModePanel(wxWindow* parent, std::unique_ptr<GameMode::Backend
 	Bind(wxEVT_MOUSEWHEEL, &GameModePanel::OnMouseWheel, this);
 	Bind(wxEVT_SIZE, &GameModePanel::OnSize, this);
 
+	// the boot video plays first; the launcher is drawn once it ends
+	PlayVideo(m_backend->TakeStartupBootVideo());
+
 	m_timer.Start(16);
 	CallAfter([this]() { SetFocus(); });
 }
@@ -550,6 +553,19 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 		buttons.setChoice = [this](int i) { m_backend->SetButtonStyle((GameMode::ButtonStyle)i); };
 		rows.push_back(buttons);
 
+		Row video;
+		video.kind = RowKind::Link;
+		video.label = _("Boot video");
+		video.description = _("Plays before Game Mode opens");
+		video.getValueText = [this]() {
+			const auto info = m_backend->GetBootVideoInfo();
+			if (!info.supported || !info.found)
+				return wxString(_("Not found"));
+			return m_backend->GetBootVideoEnabled() ? wxString(_("On")) : wxString(_("Off"));
+		};
+		video.action = [this]() { PushPage(MakeBootVideoPage()); };
+		rows.push_back(video);
+
 		Row swap;
 		swap.kind = RowKind::Toggle;
 		swap.label = _("Swap A and B");
@@ -568,6 +584,97 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 				[this]() { m_backend->ExitGameMode(); });
 		};
 		rows.push_back(exit);
+		return rows;
+	};
+	return page;
+}
+
+GameModePanel::Page GameModePanel::MakeBootVideoPage()
+{
+	Page page;
+	page.title = _("Boot video");
+	GameMode::Backend* b = m_backend.get();
+	page.build = [this, b]() {
+		std::vector<Row> rows;
+		const auto info = b->GetBootVideoInfo();
+		const bool usable = info.supported && info.found;
+		auto addFolder = [&]() {
+			Row folder;
+			folder.kind = RowKind::Action;
+			folder.label = _("Open Cemu folder");
+			folder.description = _("The boot video lives in its boot folder");
+			folder.action = [this, b]() {
+				b->OpenCemuFolder();
+				ShowToast(_("Cemu folder opened in your file manager"));
+			};
+			rows.push_back(folder);
+		};
+		if (!info.supported)
+		{
+			Row error;
+			error.kind = RowKind::Info;
+			error.danger = true;
+			error.label = _("Boot videos are not supported by this build.");
+			error.description = _("Cemu was built without FFmpeg.");
+			rows.push_back(error);
+		}
+		else if (!info.found)
+		{
+			Row error;
+			error.kind = RowKind::Info;
+			error.danger = true;
+			error.label = _("Boot video or boot folder not found.");
+			error.description = _("Open Cemu folder and place boot.mp4 or boot.webm inside the boot folder.");
+			rows.push_back(error);
+		}
+		if (!usable)
+			addFolder(); // the one thing to do here, so it comes first
+
+		Row enabled;
+		enabled.kind = RowKind::Toggle;
+		enabled.label = _("Play boot video");
+		enabled.description = usable ? wxString::Format(_("Plays boot/%s from the Cemu folder when Cemu starts in Game Mode"), info.fileName)
+			: wxString(_("Plays boot/boot.mp4 or boot/boot.webm from the Cemu folder"));
+		enabled.getBool = [b, usable]() { return usable && b->GetBootVideoEnabled(); };
+		enabled.setBool = [b](bool v) { b->SetBootVideoEnabled(v); };
+		enabled.isEnabled = [usable]() { return usable; };
+		rows.push_back(enabled);
+
+		Row preview;
+		preview.kind = RowKind::Action;
+		preview.label = _("Play it now");
+		preview.description = _("Any button skips it");
+		preview.isEnabled = [usable]() { return usable; };
+		preview.action = [this, b]() {
+			auto video = b->OpenBootVideo();
+			if (!video)
+			{
+				ShowToast(_("The boot video could not be played (see log.txt)"));
+				return;
+			}
+			PlayVideo(std::move(video));
+		};
+		rows.push_back(preview);
+
+		Row restore;
+		restore.kind = RowKind::Action;
+		restore.label = _("Restore boot video");
+		restore.description = info.hasBackup ? _("Puts the original video (boot.bak.mp4) back as boot.mp4")
+			: _("No backup: boot.bak.mp4 is not in the boot folder");
+		restore.isEnabled = [info]() { return info.supported && info.hasBackup; };
+		restore.action = [this, b]() {
+			OpenConfirmDialog(_("Restore boot video?"), _("boot.mp4 is replaced with the original video."), [this, b]() {
+				if (const auto error = b->RestoreBootVideo())
+					ShowToast(*error);
+				else
+					ShowToast(_("Boot video restored"));
+				RebuildCurrent();
+			});
+		};
+		rows.push_back(restore);
+
+		if (usable)
+			addFolder();
 		return rows;
 	};
 	return page;
@@ -1068,6 +1175,31 @@ void GameModePanel::StartGameMenuCapture()
 		[this, b]() { ShowToast(wxString::Format(_("Game Menu button: %s"), b->GetGameMenuBindingLabel())); });
 }
 
+void GameModePanel::PlayVideo(std::unique_ptr<GameMode::VideoPlayer> video)
+{
+	if (!video)
+		return;
+	m_video = std::move(video);
+	m_videoFrame = wxNullBitmap;
+	m_videoStartMs = NowMs();
+	m_dialog = Dialog{};
+	Refresh();
+}
+
+void GameModePanel::EndVideo()
+{
+	if (!m_video)
+		return;
+	m_video.reset(); // stops the sound too
+	m_videoFrame = wxNullBitmap;
+	m_fadeInStartMs = NowMs();
+	// the button that skipped must not also act in the launcher
+	m_navScratch.clear();
+	m_backend->PollControllerNav(m_navScratch);
+	m_navScratch.clear();
+	Refresh();
+}
+
 void GameModePanel::ShowToast(const wxString& message)
 {
 	m_toast = message;
@@ -1080,6 +1212,11 @@ void GameModePanel::ShowToast(const wxString& message)
 
 void GameModePanel::HandleNav(Nav nav)
 {
+	if (m_video)
+	{
+		EndVideo(); // any button skips the boot video
+		return;
+	}
 	if (m_dialog.type != Dialog::Type::None)
 	{
 		HandleDialogNav(nav);
@@ -1341,6 +1478,26 @@ void GameModePanel::OnTimer(wxTimerEvent& event)
 	bool dirty = false;
 	const wxLongLong now = NowMs();
 
+	if (m_video)
+	{
+		// any button skips; frames are pulled while painting
+		m_navScratch.clear();
+		m_backend->PollControllerNav(m_navScratch);
+		const bool skipped = !m_navScratch.empty() && now - m_videoStartMs > 300;
+		m_navScratch.clear();
+		if (skipped || m_video->IsFinished())
+			EndVideo();
+		else
+			Refresh();
+		return;
+	}
+	if (m_fadeInStartMs != 0)
+	{
+		if (now - m_fadeInStartMs > 400)
+			m_fadeInStartMs = 0;
+		dirty = true;
+	}
+
 	if (m_dialog.type == Dialog::Type::Capture)
 	{
 		if (m_dialog.poll && m_dialog.poll())
@@ -1417,6 +1574,12 @@ void GameModePanel::OnTimer(wxTimerEvent& event)
 void GameModePanel::OnKeyDown(wxKeyEvent& event)
 {
 	const int key = event.GetKeyCode();
+	if (m_video)
+	{
+		if (key != WXK_SHIFT && key != WXK_CONTROL && key != WXK_ALT && key != WXK_RAW_CONTROL)
+			EndVideo();
+		return;
+	}
 	if (m_dialog.type == Dialog::Type::Capture)
 	{
 		// modifiers alone are not a binding
@@ -1522,6 +1685,8 @@ void GameModePanel::OnKeyDown(wxKeyEvent& event)
 
 void GameModePanel::OnChar(wxKeyEvent& event)
 {
+	if (m_video)
+		return;
 	if (m_dialog.type != Dialog::Type::Text || event.ControlDown() || event.AltDown())
 	{
 		event.Skip();
@@ -1594,6 +1759,11 @@ void GameModePanel::OnMouseMove(wxMouseEvent& event)
 void GameModePanel::OnMouseDown(wxMouseEvent& event)
 {
 	SetFocus();
+	if (m_video)
+	{
+		EndVideo();
+		return;
+	}
 	const bool right = event.RightDown();
 	const int hit = HitTest(event.GetPosition());
 	if (hit <= kHintBase && hit >= kHintLast)
@@ -1661,6 +1831,8 @@ void GameModePanel::OnMouseDown(wxMouseEvent& event)
 
 void GameModePanel::OnMouseWheel(wxMouseEvent& event)
 {
+	if (m_video)
+		return;
 	const int steps = event.GetWheelRotation() / std::max(1, event.GetWheelDelta());
 	for (int i = 0; i < std::abs(steps); i++)
 		HandleNav(steps > 0 ? Nav::Up : Nav::Down);
@@ -1886,6 +2058,11 @@ void GameModePanel::Render(wxDC& dc)
 	const wxSize size = GetClientSize();
 	if (m_scale <= 0 || size.GetWidth() <= 0)
 		return;
+	if (m_video)
+	{
+		DrawVideo(gc.get(), size);
+		return;
+	}
 	const int topH = (int)S(120), hintH = (int)S(92);
 	const wxRect top(0, 0, size.GetWidth(), topH);
 	const wxRect content(0, topH, size.GetWidth(), std::max(0, size.GetHeight() - topH - hintH));
@@ -1907,6 +2084,36 @@ void GameModePanel::Render(wxDC& dc)
 	// the keyboard's button hints (Type, Delete, Space, Done) stay readable over the scrim
 	if (m_dialog.type == Dialog::Type::Text)
 		DrawHints(gc.get(), hints);
+
+	// after the boot video: the launcher fades in from the background colour
+	if (m_fadeInStartMs != 0)
+	{
+		const double t = std::clamp((NowMs() - m_fadeInStartMs).ToDouble() / 400.0, 0.0, 1.0);
+		const int alpha = (int)std::lround(255 * (1 - t) * (1 - t));
+		if (alpha > 0)
+		{
+			gc->SetPen(*wxTRANSPARENT_PEN);
+			gc->SetBrush(wxBrush(WithAlpha(kBackground, alpha)));
+			gc->DrawRectangle(0, 0, size.GetWidth(), size.GetHeight());
+		}
+	}
+}
+
+void GameModePanel::DrawVideo(wxGraphicsContext* gc, const wxSize& size)
+{
+	// the launcher's background around the picture, so a video made on it blends in
+	gc->SetPen(*wxTRANSPARENT_PEN);
+	gc->SetBrush(wxBrush(kBackground));
+	gc->DrawRectangle(0, 0, size.GetWidth(), size.GetHeight());
+	m_video->SetOutputSize(size.GetWidth(), size.GetHeight());
+	wxImage image;
+	if (m_video->TakeFrame(image) && image.IsOk())
+		m_videoFrame = wxBitmap(image);
+	if (m_videoFrame.IsOk())
+	{
+		const int w = m_videoFrame.GetWidth(), h = m_videoFrame.GetHeight();
+		gc->DrawBitmap(m_videoFrame, (size.GetWidth() - w) / 2, (size.GetHeight() - h) / 2, w, h);
+	}
 }
 
 void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
