@@ -3,6 +3,7 @@
 #include "config/ActiveSettings.h"
 #include "Cafe/CafeSystem.h"
 #include "Cafe/HW/Latte/Core/LatteTextureReplace.h"
+#include "Cafe/HW/Latte/Core/Latte.h"
 uint32 LatteTexture_CalculateTextureDataHash(LatteTexture* hostTexture);
 
 //#define BENCHMARK_TEXTURE_DECODING		// if defined, time it takes to decode textures will be measured and logged to log.txt
@@ -597,7 +598,7 @@ void LatteTextureLoader_loadTextureDataIntoSlice(LatteTexture* hostTexture, sint
 			}
 			// replacement found but its size doesn't match the host -> stale overwrite on a reused
 			// texture object; flag it and let LatteTexture_RecheckReplacements() recreate it
-			hostTexture->needsReplRecreate = true;
+			LatteTexture_FlagReplRecreate(hostTexture);
 		}
 	}
 	if (overwritten)
@@ -690,7 +691,7 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		LatteTextureReplace::ReplacementInfo _ri;
 		const bool hasReplacement = LatteTextureReplace::GetInfo(tex->replStrongHash, _ri);
 		if (hasReplacement != tex->replOverwriteIsOurs)
-			tex->needsReplRecreate = true;
+			LatteTexture_FlagReplRecreate(tex);
 	}
 
 	if (tex->isDataDefined == false && LatteTextureReplace::IsEnabled() && Latte::IsCompressedFormat(format))
@@ -742,6 +743,18 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 			tex->replOverwriteIsOurs = false;
 		}
 	}
+	// A texture that is (or should be) showing a pack replacement gets one more change check before
+	// this frame ends. Normally each texture is checked once per frame, so if the game was still
+	// writing it when we read it just now, the image we picked stays up until next frame -- the brief
+	// flash of the previous occupant's replacement. Re-arming lets its next use this frame catch the
+	// write; once the data reads the same twice, the check settles to once per frame again.
+	if (mipIndex == 0 && sliceIndex == 0 && LatteTextureReplace::IsEnabled() && tex->replStrongHash != 0)
+	{
+		LatteTextureReplace::ReplacementInfo _riRecheck;
+		if (tex->replOverwriteIsOurs || LatteTextureReplace::GetInfo(tex->replStrongHash, _riRecheck))
+			tex->lastDataUpdateFrameCounter = LatteGPUState.frameCounter - 1;
+	}
+
 	if (tex->isDataDefined == false)
 	{
 		tex->AllocateOnHost();
