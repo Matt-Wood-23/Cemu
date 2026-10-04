@@ -1171,7 +1171,12 @@ static void LatteTexture_RecreateForReplacement(LatteTexture* texture)
 	LatteTextureView* view = LatteTexture_CreateTexture(texture->dim, texture->physAddress, texture->physMipAddress, texture->format, texture->width, texture->height, texture->depth, texture->pitch, texture->mipLevels, texture->swizzle, texture->tileMode, texture->isDepth);
 	// Carry the attempt count onto the new object. Recreating makes a NEW texture and deletes this
 	// one, so a counter left behind here would never accumulate and the cap would never be reached.
-	view->baseTexture->replRecheckCount = (uint16)(texture->replRecheckCount + 1);
+	// It only counts retries for the same content: a slot the game fills with different textures over
+	// time (equipment, areas) is recreated once per change and must not run into the cap.
+	if (view->baseTexture->replStrongHash != 0 && view->baseTexture->replStrongHash == texture->replStrongHash)
+		view->baseTexture->replRecheckCount = (uint16)(texture->replRecheckCount + 1);
+	else
+		view->baseTexture->replRecheckCount = 0;
 	if (view->baseTexture->replRecheckCount >= kMaxReplRecreateAttempts)
 	{
 		view->baseTexture->replGaveUp = true;
