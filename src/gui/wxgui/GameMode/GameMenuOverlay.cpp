@@ -19,6 +19,7 @@
 #include <wx/app.h>
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <string>
 
@@ -91,20 +92,46 @@ namespace GameMode
 			return s.utf8_string();
 		}
 
+		// The menu's text sizes for a given UI scale (the font cache keys on the whole-pixel size).
+		std::array<float, 5> MenuFontSizes(float s)
+		{
+			return {std::round(40 * s), std::round(30 * s), std::round(22 * s), 20 * s * 0.95f, 20 * s * 1.15f};
+		}
+
+		float MenuScale(float screenHeight)
+		{
+			return std::clamp(screenHeight / 1080.0f, 0.5f, 3.0f);
+		}
+
+		// Asks for every size the menu uses; true once all of them are built. Called every frame
+		// while a game runs, so the fonts are ready before the menu is first opened (building a
+		// font takes a frame, and until then the text would be drawn with ImGui's tiny bitmap font).
+		bool RequestMenuFonts(float s)
+		{
+			bool ready = true;
+			for (float size : MenuFontSizes(s))
+				ready &= ImGui_GetFont(size) != nullptr;
+			return ready;
+		}
+
+		// Null until the size is built; text is then left out for that frame rather than drawn
+		// with a placeholder font.
 		ImFont* Font(float size)
 		{
-			ImFont* font = ImGui_GetFont(size);
-			return font ? font : ImGui::GetFont();
+			return ImGui_GetFont(size);
 		}
 
 		ImVec2 TextSize(float size, const std::string& text)
 		{
-			return Font(size)->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str());
+			if (ImFont* font = Font(size))
+				return font->CalcTextSizeA(size, FLT_MAX, 0.0f, text.c_str());
+			return ImVec2(size * 0.5f * (float)text.size(), size); // rough, for the frame before the font exists
 		}
 
 		void Text(ImDrawList* dl, float size, ImVec2 pos, ImU32 colour, const std::string& text)
 		{
-			dl->AddText(Font(size), size, pos, colour, text.c_str());
+			if (ImFont* font = Font(size))
+				dl->AddText(font, size, pos, colour, text.c_str());
 		}
 
 		// text vertically centred on cy
@@ -522,6 +549,12 @@ namespace GameMode
 	{
 		auto& st = s_state;
 		const bool open = IsMenuOpen();
+		if (mainWindow && CafeSystem::IsTitleRunning())
+		{
+			const float height = ImGui::GetIO().DisplaySize.y;
+			if (height > 0)
+				RequestMenuFonts(MenuScale(height)); // built in the background, ready when the menu opens
+		}
 		if (!open)
 		{
 			if (st.wasOpen)
@@ -569,7 +602,7 @@ namespace GameMode
 		const float W = io.DisplaySize.x, H = io.DisplaySize.y;
 		if (W <= 0 || H <= 0)
 			return;
-		const float s = std::clamp(H / 1080.0f, 0.5f, 3.0f);
+		const float s = MenuScale(H);
 		const float titleSize = std::round(40 * s), rowSize = std::round(30 * s), smallSize = std::round(22 * s);
 
 		ImGui::SetNextWindowPos(ImVec2(0, 0));
