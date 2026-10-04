@@ -1193,25 +1193,48 @@ static void LatteTexture_RecreateForReplacement(LatteTexture* texture)
 	LatteTexture_DeleteAbsorbedSubtextures(view->baseTexture);
 }
 
-// [texture replacement] Recreate any texture flagged as stale, i.e. one where a replacement was
-// found but its size did not match the host texture. That happens when a texture object is reused
-// for different data (e.g. swapping equipment) and still carries the previous overwrite.
-// Recreating makes it a fresh load so the loader sizes it correctly. One per call to stay safe.
+// number of textures flagged with needsReplRecreate (only touched on the GPU thread)
+static uint32 s_replRecreatePending = 0;
+
+void LatteTexture_FlagReplRecreate(LatteTexture* texture)
+{
+	if (texture->needsReplRecreate)
+		return;
+	texture->needsReplRecreate = true;
+	s_replRecreatePending++;
+}
+
+// [texture replacement] Recreate every texture flagged as stale: one reused for different data
+// (equipment, areas) whose replacement no longer fits -- it gained or lost a replacement, or the
+// replacement's size differs. Recreating makes it a fresh load, so the loader decides again.
+// Runs as soon as the GPU thread is between commands, so the stale image is on screen for at most
+// the draws already queued with it rather than for up to half a second (this used to run every
+// 30 frames and fix one texture per run).
 void LatteTexture_RecheckReplacements()
 {
+	if (s_replRecreatePending == 0)
+		return;
+	s_replRecreatePending = 0;
 	if (!LatteTextureReplace::IsEnabled())
 		return;
 	std::vector<LatteTexture*> allCopy = LatteTexture::GetAllTextures();
+	std::vector<LatteTexture*> flagged;
 	for (auto tex : allCopy)
 	{
 		if (tex && tex->needsReplRecreate)
 		{
 			tex->needsReplRecreate = false;
-			if (tex->replGaveUp)
-				continue; // already capped out, don't churn on it again
-			LatteTexture_RecreateForReplacement(tex);
-			return;
+			if (!tex->replGaveUp) // already capped out, don't churn on it again
+				flagged.push_back(tex);
 		}
+	}
+	// collected first: recreating deletes the old object and creates a new one. A recreate can also
+	// delete other textures (absorbed subtextures), so each one is checked to still exist first.
+	for (auto tex : flagged)
+	{
+		const std::vector<LatteTexture*>& live = LatteTexture::GetAllTextures();
+		if (std::find(live.begin(), live.end(), tex) != live.end())
+			LatteTexture_RecreateForReplacement(tex);
 	}
 }
 
