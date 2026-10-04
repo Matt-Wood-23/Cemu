@@ -1,6 +1,7 @@
 #include "wxgui/CemuApp.h"
 #include "wxCemuConfig.h"
 #include "wxgui/MainWindow.h"
+#include "wxgui/GameMode/GameModeFont.h"
 #include "wxgui/wxgui.h"
 #include "config/CemuConfig.h"
 #ifdef ENABLE_VULKAN
@@ -265,6 +266,7 @@ bool CemuApp::OnInit()
 #if __WXGTK__
 	GTKSuppressDiagnostics(G_LOG_LEVEL_MASK & ~G_LOG_FLAG_FATAL);
 #endif
+	GameMode::RegisterUIFont(); // Game Mode's font; before any window exists (see GameModeFont.h)
 	std::set<fs::path> failedWriteAccess;
 	DeterminePaths(failedWriteAccess);
 	// make sure default cemu directories exist

@@ -55,6 +55,8 @@ add_library(CemuWxGui STATIC
   GameMode/BootVideo.cpp
   GameMode/BootVideo.h
   GameMode/GameMenuOverlay.cpp
+  GameMode/GameModeFont.cpp
+  GameMode/GameModeFont.h
   GameMode/GameMode.cpp
   GameMode/GameMode.h
   GameMode/GameModeBackend.h

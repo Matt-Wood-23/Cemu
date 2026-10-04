@@ -1,4 +1,5 @@
 #include "GameModePanel.h"
+#include "GameModeFont.h"
 
 #include <wx/clipbrd.h>
 #include <wx/dataobj.h>
@@ -34,13 +35,10 @@ namespace
 		return wxColour(c.Red(), c.Green(), c.Blue(), alpha);
 	}
 
+	// Lato Medium, like the in-game menu (see GameModeFont.h)
 	wxFont MakeFont(double px, bool bold = false)
 	{
-		wxFontInfo info(wxSize(0, std::max(6, (int)std::lround(px))));
-		info.Family(wxFONTFAMILY_SWISS);
-		if (bold)
-			info.Bold();
-		return wxFont(info);
+		return GameMode::MakeUIFont(px, bold);
 	}
 
 	void FillRounded(wxGraphicsContext* gc, double x, double y, double w, double h, double r, const wxColour& colour)
