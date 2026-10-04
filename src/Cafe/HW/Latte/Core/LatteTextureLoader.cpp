@@ -626,6 +626,22 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		memset(textureLoader.dumpRGBA, 0x00, dumpSize);
 	}
 
+	// update texture data offsets and hashes
+	// This has to happen before anything reads the guest data -- the replacement hash below and the
+	// decode further down. The game keeps running while the GPU thread loads, and it can be writing a
+	// new texture into this memory right now (MH3U reuses texture slots when models and areas
+	// change). The change tracker's baseline must be taken from the bytes as they were *before* we
+	// read them: then a write that lands while we hash or decode shows up as a change next frame and
+	// the texture is reloaded. Taken afterwards (as before), such a write became part of the
+	// baseline and was never noticed, so the texture kept whatever was read first -- for a pack
+	// texture, the previous occupant's replacement drawn on the new model until the area reloaded.
+	if (mipIndex == 0 || (tex->texDataPtrLow == 0 && tex->texDataPtrHigh == 0))
+	{
+		tex->texDataPtrLow = physImagePtr + textureLoader.minOffsetOutdated; // always zero
+		tex->texDataPtrHigh = physImagePtr + textureLoader.maxOffsetOutdated; // currently set to surface size
+		LatteTC_ResetTextureChangeTracker(tex, true);
+	}
+
 	// query texture decoder from renderer
 	TextureDecoder* texDecoder = nullptr;
 	texDecoder = g_renderer->texture_chooseDecodedFormat(format, tex->isDepth, dim, width, height);
@@ -661,6 +677,20 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 			for (sint32 m = 0; m < std::max<sint32>(1, tex->mipLevels); m++)
 				LatteTextureReplace::RecordRenameMapping(tex->replLegacyHash, tex->replStrongHash, tex->width, tex->height, (uint32)format, m);
 		}
+	}
+
+	// A texture object that already exists is reused when the game puts different data at the same
+	// address (same size and format). Whether it is resized for a replacement was only decided when it
+	// was first created, so after such a reuse it could keep the previous texture's replacement size
+	// and show nothing, or miss the new texture's replacement. Flag it so it is rebuilt as a fresh
+	// texture (LatteTexture_RecheckReplacements), which decides again from the data now in memory.
+	if (tex->isDataDefined && mipIndex == 0 && sliceIndex == 0 && LatteTextureReplace::IsEnabled() && tex->replStrongHash != 0
+		&& (Latte::IsCompressedFormat(format) || _replUncompressed))
+	{
+		LatteTextureReplace::ReplacementInfo _ri;
+		const bool hasReplacement = LatteTextureReplace::GetInfo(tex->replStrongHash, _ri);
+		if (hasReplacement != tex->replOverwriteIsOurs)
+			tex->needsReplRecreate = true;
 	}
 
 	if (tex->isDataDefined == false && LatteTextureReplace::IsEnabled() && Latte::IsCompressedFormat(format))
@@ -773,14 +803,7 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		}
 	}
 
-	// update texture data offsets and hashes
-	// this has to be done before the texture data is decoded & uploaded to prevent a race condition where updates during upload are missed
-	if (mipIndex == 0 || (tex->texDataPtrLow == 0 && tex->texDataPtrHigh == 0))
-	{
-		tex->texDataPtrLow = physImagePtr + textureLoader.minOffsetOutdated; // always zero
-		tex->texDataPtrHigh = physImagePtr + textureLoader.maxOffsetOutdated; // currently set to surface size
-		LatteTC_ResetTextureChangeTracker(tex, true);
-	}
+	// (texture data offsets and the change-tracker baseline were set before hashing and decoding, see above)
 	// load slice
 	//debug_printf("[Load Slice] Addr: %08x MIP: %02d Slice: %02d Res %04x/%04x Texel Res %04x/%04x Fmt %04x Tm %d\n", textureLoader.physAddress, mipIndex, sliceIndex, textureLoader.width, textureLoader.height, textureLoader.texelCountX, textureLoader.texelCountY, (int)format, tileMode);
 	LatteTextureLoader_loadTextureDataIntoSlice(tex, textureLoader.width, textureLoader.height, depth, mipLevels, pixelData, sliceIndex, mipIndex, imageSize);
