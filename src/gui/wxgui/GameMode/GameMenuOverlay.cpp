@@ -28,9 +28,9 @@
 
 namespace GameMode
 {
-	// resources/menu_logo.png, embedded by cmake/EmbedFile.cmake
-	const uint8_t* MenuLogoData();
-	size_t MenuLogoSize();
+	// resources/logo.png (with alpha), embedded by cmake/EmbedFile.cmake
+	const uint8_t* LogoData();
+	size_t LogoSize();
 
 	namespace
 	{
@@ -38,11 +38,11 @@ namespace GameMode
 		constexpr ImU32 kScrim = IM_COL32(0, 0, 0, 140);
 		constexpr ImU32 kSurfaceLow = IM_COL32(0x1D, 0x1B, 0x20, 0xF5);
 		constexpr ImU32 kSurfaceHighest = IM_COL32(0x36, 0x34, 0x3B, 0xFF);
-		// accent: the logo's purple (see GameModePanel.cpp for the contrast notes)
-		constexpr ImU32 kPrimary = IM_COL32(0xA8, 0x4D, 0xF6, 0xFF);
-		constexpr ImU32 kPrimaryText = IM_COL32(0xCB, 0x94, 0xFA, 0xFF);
-		constexpr ImU32 kOnPrimary = IM_COL32(0x0B, 0x06, 0x10, 0xFF);
-		constexpr ImU32 kSecondaryContainer = IM_COL32(0x39, 0x27, 0x4B, 0xFF);
+		// accent: a calmer take on the logo's purple (see GameModePanel.cpp for the contrast notes)
+		constexpr ImU32 kPrimary = IM_COL32(0x96, 0x59, 0xD6, 0xFF);
+		constexpr ImU32 kPrimaryText = IM_COL32(0xC0, 0x9B, 0xE6, 0xFF);
+		constexpr ImU32 kOnPrimary = IM_COL32(0x05, 0x03, 0x08, 0xFF);
+		constexpr ImU32 kSecondaryContainer = IM_COL32(0x36, 0x2A, 0x46, 0xFF);
 		constexpr ImU32 kOnSecondaryContainer = IM_COL32(0xF3, 0xEA, 0xFF, 0xFF);
 		constexpr ImU32 kOnSurface = IM_COL32(0xE6, 0xE0, 0xE9, 0xFF);
 		constexpr ImU32 kOnSurfaceVariant = IM_COL32(0xCA, 0xC4, 0xD0, 0xFF);
@@ -101,9 +101,9 @@ namespace GameMode
 			return s.utf8_string();
 		}
 
-		// The Cemu logo at the top of the drawer. Built in (resources/menu_logo.png, already blended
-		// onto the drawer colour because the renderer's ImGui textures are opaque RGB) and uploaded
-		// once per renderer: a new renderer (another game started) gets its own copy.
+		// The Cemu logo at the top of the drawer, uploaded once per renderer (a new renderer, i.e.
+		// another game started, gets its own copy). The renderer's ImGui textures are opaque RGB, so
+		// the logo is blended onto the drawer colour first.
 		struct MenuLogo
 		{
 			ImTextureID id = nullptr;
@@ -122,7 +122,7 @@ namespace GameMode
 				logo = MenuLogo{nullptr, renderer};
 			if (!logo.id && !logo.failed)
 			{
-				wxMemoryInputStream in(GameMode::MenuLogoData(), GameMode::MenuLogoSize());
+				wxMemoryInputStream in(GameMode::LogoData(), GameMode::LogoSize());
 				wxImage image(in, wxBITMAP_TYPE_PNG);
 				if (!image.IsOk() || image.GetWidth() <= 0)
 				{
@@ -131,8 +131,17 @@ namespace GameMode
 				}
 				logo.width = image.GetWidth();
 				logo.height = image.GetHeight();
+				const size_t pixels = (size_t)logo.width * logo.height;
 				const uint8* rgb = image.GetData();
-				std::vector<uint8> data(rgb, rgb + (size_t)logo.width * logo.height * 3);
+				const uint8* alpha = image.HasAlpha() ? image.GetAlpha() : nullptr;
+				const uint8 drawer[3] = {(uint8)(kSurfaceLow & 0xFF), (uint8)((kSurfaceLow >> 8) & 0xFF), (uint8)((kSurfaceLow >> 16) & 0xFF)};
+				std::vector<uint8> data(pixels * 3);
+				for (size_t i = 0; i < pixels; i++)
+				{
+					const unsigned a = alpha ? alpha[i] : 255;
+					for (int c = 0; c < 3; c++)
+						data[i * 3 + c] = (uint8)((rgb[i * 3 + c] * a + drawer[c] * (255 - a) + 127) / 255);
+				}
 				logo.id = renderer->GenerateTexture(data, {logo.width, logo.height});
 				logo.failed = logo.id == nullptr;
 			}
@@ -199,6 +208,54 @@ namespace GameMode
 					cut.pop_back(); // do not split a UTF-8 sequence
 			}
 			return cut + "...";
+		}
+
+		// Word-wraps text into at most maxLines lines of maxWidth; whatever does not fit ends the last
+		// line with "...". A single word wider than a line is cut there.
+		std::vector<std::string> WrapLines(float size, const std::string& text, float maxWidth, int maxLines)
+		{
+			std::vector<std::string> words;
+			{
+				std::string word;
+				for (char c : text)
+				{
+					if (c == ' ')
+					{
+						if (!word.empty())
+							words.push_back(word);
+						word.clear();
+					}
+					else
+						word += c;
+				}
+				if (!word.empty())
+					words.push_back(word);
+			}
+			std::vector<std::string> lines;
+			std::string line;
+			size_t i = 0;
+			for (; i < words.size(); i++)
+			{
+				const std::string candidate = line.empty() ? words[i] : line + " " + words[i];
+				if (TextSize(size, candidate).x <= maxWidth || line.empty())
+				{
+					line = candidate;
+					continue;
+				}
+				if ((int)lines.size() == maxLines - 1)
+					break; // last line is full: the rest is cut below
+				lines.push_back(line);
+				line = words[i];
+			}
+			if (i < words.size()) // ran out of lines
+			{
+				std::string rest = line;
+				for (; i < words.size(); i++)
+					rest += " " + words[i];
+				line = rest;
+			}
+			lines.push_back(Ellipsize(size, line, maxWidth));
+			return lines;
 		}
 
 		std::string LayoutLabel(sint32 layout)
@@ -674,10 +731,26 @@ namespace GameMode
 				dl->AddImage(logo->id, ImVec2(padX - 4 * s, 28 * s), ImVec2(padX - 4 * s + logoW, 28 * s + logoH));
 				headerY = logoH + 12 * s;
 			}
-			TextV(dl, titleSize, padX, headerY + 70 * s, kOnSurface, PageTitle());
-			TextV(dl, smallSize, padX, headerY + 118 * s, kOnSurfaceVariant, Ellipsize(smallSize, st.page == Page::ConfirmExit ? U8(_("The game closes along with Cemu. Unsaved progress will be lost.")) : st.gameName, drawerW - padX * 2));
-
-			float y = headerY + 160 * s;
+			float y;
+			if (st.page == Page::Main)
+			{
+				// the main page is headed by the game's name: up to three lines, then "..."
+				const float lineH = titleSize * 1.2f;
+				const auto lines = WrapLines(titleSize, st.gameName.empty() ? PageTitle() : st.gameName, drawerW - padX * 2, 3);
+				float ly = headerY + 50 * s + lineH / 2;
+				for (const std::string& line : lines)
+				{
+					TextV(dl, titleSize, padX, ly, kOnSurface, line);
+					ly += lineH;
+				}
+				y = ly - lineH / 2 + 34 * s;
+			}
+			else
+			{
+				TextV(dl, titleSize, padX, headerY + 70 * s, kOnSurface, PageTitle());
+				TextV(dl, smallSize, padX, headerY + 118 * s, kOnSurfaceVariant, Ellipsize(smallSize, st.page == Page::ConfirmExit ? U8(_("The game closes along with Cemu. Unsaved progress will be lost.")) : st.gameName, drawerW - padX * 2));
+				y = headerY + 160 * s;
+			}
 			if (!st.message.empty())
 			{
 				TextV(dl, smallSize, padX, y + 14 * s, kError, Ellipsize(smallSize, st.message, drawerW - padX * 2));

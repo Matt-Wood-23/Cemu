@@ -5,10 +5,18 @@
 #include <wx/dataobj.h>
 #include <wx/dcbuffer.h>
 #include <wx/graphics.h>
+#include <wx/mstream.h>
 #include <wx/time.h>
 
 #include <algorithm>
 #include <cmath>
+
+namespace GameMode
+{
+	// resources/logo.png, embedded by cmake/EmbedFile.cmake
+	const uint8_t* LogoData();
+	size_t LogoSize();
+}
 
 using GameMode::Nav;
 
@@ -20,15 +28,15 @@ namespace
 	const wxColour kSurface(0x21, 0x1F, 0x26);
 	const wxColour kSurfaceHigh(0x2B, 0x29, 0x30);
 	const wxColour kSurfaceHighest(0x36, 0x34, 0x3B);
-	// Accent: the purple of the "U" in the Cemu logo. Used as is for fills, outlines and marks;
-	// anything drawn on it uses kOnPrimary (near-black, 4.8:1). Accent *text* on the dark
-	// background uses kPrimaryText, a lighter tint of the same purple, since the logo shade itself
-	// is only ~4.4:1 against the background.
-	const wxColour kPrimary(0xA8, 0x4D, 0xF6);
-	const wxColour kPrimaryText(0xCB, 0x94, 0xFA);
-	const wxColour kOnPrimary(0x0B, 0x06, 0x10);
-	// focused rows/tiles: a dark tint of the logo purple, with light text (11:1)
-	const wxColour kSecondaryContainer(0x39, 0x27, 0x4B);
+	// Accent: a calmer, slightly darker take on the purple of the Cemu logo's "U" (the logo itself,
+	// #A84DF6, stays as it is). Used as is for fills, outlines and marks; anything drawn on it uses
+	// kOnPrimary (near-black, 4.7:1). Accent *text* on the dark background uses kPrimaryText, a
+	// lighter tint of the same purple, for legibility.
+	const wxColour kPrimary(0x96, 0x59, 0xD6);
+	const wxColour kPrimaryText(0xC0, 0x9B, 0xE6);
+	const wxColour kOnPrimary(0x05, 0x03, 0x08);
+	// focused rows/tiles: a dark tint of the accent, with light text
+	const wxColour kSecondaryContainer(0x36, 0x2A, 0x46);
 	const wxColour kOnSecondaryContainer(0xF3, 0xEA, 0xFF);
 	const wxColour kOnSurface(0xE6, 0xE0, 0xE9);
 	const wxColour kOnSurfaceVariant(0xCA, 0xC4, 0xD0);
@@ -45,6 +53,29 @@ namespace
 	wxFont MakeFont(double px, bool bold = false)
 	{
 		return GameMode::MakeUIFont(px, bold);
+	}
+
+	// The Cemu logo (resources/logo.png, built in), scaled to the given height and kept until the
+	// height changes.
+	const wxBitmap& GetLogo(int height)
+	{
+		static wxImage source;
+		static bool loaded = false;
+		static wxBitmap scaled;
+		static int scaledHeight = 0;
+		if (!loaded)
+		{
+			loaded = true;
+			wxMemoryInputStream in(GameMode::LogoData(), GameMode::LogoSize());
+			source.LoadFile(in, wxBITMAP_TYPE_PNG);
+		}
+		if (source.IsOk() && height > 0 && height != scaledHeight)
+		{
+			scaledHeight = height;
+			const int width = std::max(1, (int)std::lround((double)source.GetWidth() * height / source.GetHeight()));
+			scaled = wxBitmap(source.Scale(width, height, wxIMAGE_QUALITY_HIGH));
+		}
+		return scaled;
 	}
 
 	void FillRounded(wxGraphicsContext* gc, double x, double y, double w, double h, double r, const wxColour& colour)
@@ -2132,11 +2163,22 @@ void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
 	const double cy = area.y + area.height / 2.0;
 	if (page.isLibrary)
 	{
-		gc->SetFont(MakeFont(S(46), true), kOnSurface);
-		DrawTextV(gc, "Cemu", area.x + pad, cy);
-		const double w = TextWidth(gc, "Cemu");
+		// the Cemu logo, then "Game Mode"
+		double w = 0;
+		const wxBitmap& logo = GetLogo((int)std::lround(S(64)));
+		if (logo.IsOk())
+		{
+			gc->DrawBitmap(logo, area.x + pad, cy - logo.GetHeight() / 2.0, logo.GetWidth(), logo.GetHeight());
+			w = logo.GetWidth();
+		}
+		else
+		{
+			gc->SetFont(MakeFont(S(46), true), kOnSurface);
+			DrawTextV(gc, "Cemu", area.x + pad, cy);
+			w = TextWidth(gc, "Cemu");
+		}
 		gc->SetFont(MakeFont(S(26)), kOnSurfaceVariant);
-		DrawTextV(gc, _("Game Mode"), area.x + pad + w + S(18), cy + S(4));
+		DrawTextV(gc, _("Game Mode"), area.x + pad + w + S(22), cy + S(4));
 
 		// right side: status and a settings chip (also clickable)
 		const wxString chipText = _("Settings");
