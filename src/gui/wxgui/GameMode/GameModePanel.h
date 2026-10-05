@@ -231,6 +231,8 @@ private:
 
 	std::vector<HitRect> m_hitRects;
 	wxPoint m_lastMouse{-1, -1};
+	bool m_hoverSuspended = false; // set by button presses, cleared once the mouse really moves
+	wxPoint m_hoverAnchor{-1, -1};
 	std::vector<GameMode::Nav> m_navScratch;
 	std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };

@@ -1291,6 +1291,7 @@ void GameModeBackendCemu::PollControllerNav(std::vector<GameMode::Nav>& out)
 void GameModeBackendCemu::ExitGameMode()
 {
 	MainWindow* window = m_mainWindow;
+	cemuLog_log(LogType::Force, "Game Mode: Exit Game Mode confirmed");
 	// not from inside the panel's own event handler: this destroys the panel
 	wxTheApp->CallAfter([window]() { window->SetGameModeEnabled(false); });
 }

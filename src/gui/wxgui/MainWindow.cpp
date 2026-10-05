@@ -798,7 +798,13 @@ bool MainWindow::IsGameModeEnabled() const
 void MainWindow::SetGameModeEnabled(bool enabled)
 {
 	auto& config = GetWxGUIConfig();
-	if (config.game_mode == enabled)
+	// What is on screen counts, not only the saved flag: if the two ever disagree, Exit must
+	// still take the launcher down instead of returning early.
+	const bool launcherShown = m_gameModePanel != nullptr;
+	const bool panelOutOfDate = !m_game_launched && m_main_panel && launcherShown != enabled;
+	cemuLog_log(LogType::Force, "Game Mode: {} (setting {}, launcher {}, game running {})", enabled ? "enter" : "exit",
+		config.game_mode.GetValue() ? "on" : "off", launcherShown ? "shown" : "hidden", m_game_launched ? "yes" : "no");
+	if (config.game_mode == enabled && !panelOutOfDate)
 		return;
 	config.game_mode = enabled;
 	g_wxConfig.Save();

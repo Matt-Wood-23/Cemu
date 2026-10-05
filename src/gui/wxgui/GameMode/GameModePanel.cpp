@@ -188,6 +188,11 @@ namespace
 		return wxGetUTCTimeMillis();
 	}
 
+	// A choice or confirm dialog ignores A/B for this long after it opens
+	constexpr int kDialogInputDelayMs = 250;
+	// after a button press, the pointer has to travel this far before hovering moves the focus
+	constexpr int kHoverResumeDistance = 24;
+
 	// Hit-rect ids below zero. Hint buttons use kHintBase - (int)nav.
 	constexpr int kHintBase = -100;
 	constexpr int kHintLast = kHintBase - 7;
@@ -988,6 +993,7 @@ void GameModePanel::OpenChoiceDialog(const wxString& title, const GameMode::Choi
 {
 	m_dialog = Dialog{};
 	m_dialog.type = Dialog::Type::Choice;
+	m_dialog.startedMs = NowMs();
 	m_dialog.title = title;
 	m_dialog.options = choice.options;
 	m_dialog.focus = std::clamp(choice.selected, 0, std::max(0, (int)choice.options.size() - 1));
@@ -999,6 +1005,7 @@ void GameModePanel::OpenConfirmDialog(const wxString& title, const wxString& mes
 {
 	m_dialog = Dialog{};
 	m_dialog.type = Dialog::Type::Confirm;
+	m_dialog.startedMs = NowMs();
 	m_dialog.title = title;
 	m_dialog.message = message;
 	m_dialog.options = {_("Cancel"), _("OK")};
@@ -1252,6 +1259,10 @@ void GameModePanel::ShowToast(const wxString& message)
 
 void GameModePanel::HandleNav(Nav nav)
 {
+	// A resting mouse that twitches (or a trackpad) must not drag the focus back to whatever is
+	// under the pointer, such as Cancel after you moved to OK with the controller.
+	m_hoverSuspended = true;
+	m_hoverAnchor = m_lastMouse;
 	if (m_video)
 	{
 		EndVideo(); // any button skips the boot video
@@ -1473,6 +1484,12 @@ void GameModePanel::HandleDialogNav(Nav nav)
 		Refresh();
 		return;
 	}
+	// One press can arrive twice from different sources (Steam's desktop layout turns A into
+	// Enter while the pad is still read directly, a held key repeats). The first copy opens the
+	// dialog and the second would answer it at once with the focused Cancel, so the press looked
+	// like it did nothing. Nobody answers a dialog this fast on purpose.
+	if ((nav == Nav::Accept || nav == Nav::Back) && NowMs() - d.startedMs < kDialogInputDelayMs)
+		return;
 	const bool horizontal = d.type == Dialog::Type::Confirm;
 	switch (nav)
 	{
@@ -1685,6 +1702,16 @@ void GameModePanel::OnKeyDown(wxKeyEvent& event)
 		event.Skip(); // the character arrives in OnChar
 		return;
 	}
+	const bool direction = key == WXK_UP || key == WXK_NUMPAD_UP || key == WXK_DOWN || key == WXK_NUMPAD_DOWN ||
+		key == WXK_LEFT || key == WXK_NUMPAD_LEFT || key == WXK_RIGHT || key == WXK_NUMPAD_RIGHT;
+	if (event.IsAutoRepeat() && !direction)
+	{
+		// a held Enter would open a dialog and then answer it with Cancel
+		if (key != WXK_RETURN && key != WXK_NUMPAD_ENTER && key != WXK_SPACE && key != WXK_ESCAPE &&
+			key != WXK_BACK && key != 'X' && key != 'Y')
+			event.Skip();
+		return;
+	}
 	switch (key)
 	{
 	case WXK_UP:
@@ -1759,6 +1786,13 @@ void GameModePanel::OnMouseMove(wxMouseEvent& event)
 	if (pos == m_lastMouse)
 		return;
 	m_lastMouse = pos;
+	if (m_hoverSuspended)
+	{
+		const wxPoint moved = pos - m_hoverAnchor;
+		if (m_hoverAnchor != wxPoint(-1, -1) && std::abs(moved.x) + std::abs(moved.y) < kHoverResumeDistance)
+			return;
+		m_hoverSuspended = false;
+	}
 	const int hit = HitTest(pos);
 	if (hit < 0)
 		return;
