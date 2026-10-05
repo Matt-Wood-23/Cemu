@@ -20,10 +20,16 @@ namespace
 	const wxColour kSurface(0x21, 0x1F, 0x26);
 	const wxColour kSurfaceHigh(0x2B, 0x29, 0x30);
 	const wxColour kSurfaceHighest(0x36, 0x34, 0x3B);
-	const wxColour kPrimary(0xD0, 0xBC, 0xFF);
-	const wxColour kOnPrimary(0x38, 0x1E, 0x72);
-	const wxColour kSecondaryContainer(0x4A, 0x44, 0x58);
-	const wxColour kOnSecondaryContainer(0xE8, 0xDE, 0xF8);
+	// Accent: the purple of the "U" in the Cemu logo. Used as is for fills, outlines and marks;
+	// anything drawn on it uses kOnPrimary (near-black, 4.8:1). Accent *text* on the dark
+	// background uses kPrimaryText, a lighter tint of the same purple, since the logo shade itself
+	// is only ~4.4:1 against the background.
+	const wxColour kPrimary(0xA8, 0x4D, 0xF6);
+	const wxColour kPrimaryText(0xCB, 0x94, 0xFA);
+	const wxColour kOnPrimary(0x0B, 0x06, 0x10);
+	// focused rows/tiles: a dark tint of the logo purple, with light text (11:1)
+	const wxColour kSecondaryContainer(0x39, 0x27, 0x4B);
+	const wxColour kOnSecondaryContainer(0xF3, 0xEA, 0xFF);
 	const wxColour kOnSurface(0xE6, 0xE0, 0xE9);
 	const wxColour kOnSurfaceVariant(0xCA, 0xC4, 0xD0);
 	const wxColour kOutline(0x93, 0x8F, 0x99);
@@ -1937,7 +1943,7 @@ void GameModePanel::DrawIcon(wxGraphicsContext* gc, uint64_t titleId, const wxSt
 		return;
 	}
 	FillRounded(gc, rect.x, rect.y, rect.width, rect.height, radius, kSurfaceHighest);
-	gc->SetFont(MakeFont(rect.height * 0.42, true), kPrimary);
+	gc->SetFont(MakeFont(rect.height * 0.42, true), kPrimaryText);
 	const wxString initial = name.empty() ? wxString("?") : name.Left(1).Upper();
 	const double tw = TextWidth(gc, initial);
 	DrawTextV(gc, initial, rect.x + (rect.width - tw) / 2, rect.y + rect.height / 2.0);
@@ -2248,7 +2254,7 @@ void GameModePanel::DrawLibrary(wxGraphicsContext* gc, const wxRect& area)
 		if (game.favorite)
 		{
 			DrawTextV(gc, Ellipsize(gc, game.name, textW), textX, y + tileH / 2 - S(18));
-			gc->SetFont(MakeFont(S(22)), kPrimary);
+			gc->SetFont(MakeFont(S(22)), kPrimaryText);
 			DrawTextV(gc, wxString::FromUTF8("★ ") + _("Favourite"), textX, y + tileH / 2 + S(24));
 		}
 		else
@@ -2334,7 +2340,7 @@ void GameModePanel::DrawRow(wxGraphicsContext* gc, const Row& row, const wxRect&
 	const double cy = rect.y + rect.height / 2.0;
 	if (row.kind == RowKind::Header)
 	{
-		gc->SetFont(MakeFont(S(24), true), kPrimary);
+		gc->SetFont(MakeFont(S(24), true), kPrimaryText);
 		DrawTextV(gc, row.label, rect.x + padX, rect.y + rect.height - S(24));
 		return;
 	}
@@ -2380,7 +2386,7 @@ void GameModePanel::DrawRow(wxGraphicsContext* gc, const Row& row, const wxRect&
 	{
 		const auto choice = row.getChoice();
 		wxString value = (choice.selected >= 0 && choice.selected < (int)choice.options.size()) ? choice.options[choice.selected] : wxString();
-		gc->SetFont(MakeFont(S(26), true), enabled ? (focused ? kOnSecondaryContainer : kPrimary) : descColour);
+		gc->SetFont(MakeFont(S(26), true), enabled ? (focused ? kOnSecondaryContainer : kPrimaryText) : descColour);
 		value = Ellipsize(gc, value, rect.width * 0.42);
 		const double vw = TextWidth(gc, value);
 		const double arrows = focused ? S(34) : 0;
@@ -2527,7 +2533,7 @@ void GameModePanel::DrawDialog(wxGraphicsContext* gc, const wxRect& area)
 		const double bh = S(64);
 		for (int i = (int)d.options.size() - 1; i >= 0; i--)
 		{
-			gc->SetFont(MakeFont(S(28), true), i == d.focus ? kOnPrimary : kPrimary);
+			gc->SetFont(MakeFont(S(28), true), i == d.focus ? kOnPrimary : kPrimaryText);
 			const double bw = TextWidth(gc, d.options[i]) + S(64);
 			bx -= bw;
 			if (i == d.focus)

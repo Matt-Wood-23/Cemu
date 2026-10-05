@@ -213,6 +213,19 @@ if(TARGET CemuFFmpeg)
 	set_source_files_properties("${BOOT_VIDEO_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif()
 
+# the Cemu logo shown at the top of the in-game menu (F10)
+set(MENU_LOGO_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/GameMode/resources/menu_logo.png")
+set(MENU_LOGO_CPP "${CMAKE_CURRENT_BINARY_DIR}/MenuLogo.cpp")
+add_custom_command(
+	OUTPUT "${MENU_LOGO_CPP}"
+	COMMAND ${CMAKE_COMMAND} -DINPUT=${MENU_LOGO_SOURCE} -DOUTPUT=${MENU_LOGO_CPP}
+		-DNAMESPACE=GameMode -DSYMBOL=MenuLogo -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+	DEPENDS "${MENU_LOGO_SOURCE}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+	COMMENT "Embedding the Game Mode menu logo"
+	VERBATIM)
+target_sources(CemuWxGui PRIVATE "${MENU_LOGO_CPP}")
+set_source_files_properties("${MENU_LOGO_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 if(UNIX AND NOT APPLE)
 	if(ENABLE_FERAL_GAMEMODE)
 		target_link_libraries(CemuWxGui PRIVATE gamemode)

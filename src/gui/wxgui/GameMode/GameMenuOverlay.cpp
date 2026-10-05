@@ -14,9 +14,12 @@
 #include "Cafe/HW/Latte/Core/LatteTextureReplace.h"
 #include "config/CemuConfig.h"
 #include "imgui/imgui_extension.h"
+#include "Cafe/HW/Latte/Renderer/Renderer.h"
 
 #include <imgui.h>
 #include <wx/app.h>
+#include <wx/image.h>
+#include <wx/mstream.h>
 
 #include <algorithm>
 #include <array>
@@ -25,16 +28,22 @@
 
 namespace GameMode
 {
+	// resources/menu_logo.png, embedded by cmake/EmbedFile.cmake
+	const uint8_t* MenuLogoData();
+	size_t MenuLogoSize();
+
 	namespace
 	{
 		// same palette as the launcher (Material 3 baseline dark)
 		constexpr ImU32 kScrim = IM_COL32(0, 0, 0, 140);
 		constexpr ImU32 kSurfaceLow = IM_COL32(0x1D, 0x1B, 0x20, 0xF5);
 		constexpr ImU32 kSurfaceHighest = IM_COL32(0x36, 0x34, 0x3B, 0xFF);
-		constexpr ImU32 kPrimary = IM_COL32(0xD0, 0xBC, 0xFF, 0xFF);
-		constexpr ImU32 kOnPrimary = IM_COL32(0x38, 0x1E, 0x72, 0xFF);
-		constexpr ImU32 kSecondaryContainer = IM_COL32(0x4A, 0x44, 0x58, 0xFF);
-		constexpr ImU32 kOnSecondaryContainer = IM_COL32(0xE8, 0xDE, 0xF8, 0xFF);
+		// accent: the logo's purple (see GameModePanel.cpp for the contrast notes)
+		constexpr ImU32 kPrimary = IM_COL32(0xA8, 0x4D, 0xF6, 0xFF);
+		constexpr ImU32 kPrimaryText = IM_COL32(0xCB, 0x94, 0xFA, 0xFF);
+		constexpr ImU32 kOnPrimary = IM_COL32(0x0B, 0x06, 0x10, 0xFF);
+		constexpr ImU32 kSecondaryContainer = IM_COL32(0x39, 0x27, 0x4B, 0xFF);
+		constexpr ImU32 kOnSecondaryContainer = IM_COL32(0xF3, 0xEA, 0xFF, 0xFF);
 		constexpr ImU32 kOnSurface = IM_COL32(0xE6, 0xE0, 0xE9, 0xFF);
 		constexpr ImU32 kOnSurfaceVariant = IM_COL32(0xCA, 0xC4, 0xD0, 0xFF);
 		constexpr ImU32 kOutline = IM_COL32(0x93, 0x8F, 0x99, 0xFF);
@@ -90,6 +99,44 @@ namespace GameMode
 		std::string U8(const wxString& s)
 		{
 			return s.utf8_string();
+		}
+
+		// The Cemu logo at the top of the drawer. Built in (resources/menu_logo.png, already blended
+		// onto the drawer colour because the renderer's ImGui textures are opaque RGB) and uploaded
+		// once per renderer: a new renderer (another game started) gets its own copy.
+		struct MenuLogo
+		{
+			ImTextureID id = nullptr;
+			Renderer* owner = nullptr;
+			int width = 0, height = 0;
+			bool failed = false;
+		};
+
+		const MenuLogo* GetMenuLogo()
+		{
+			static MenuLogo logo;
+			Renderer* renderer = g_renderer.get();
+			if (!renderer)
+				return nullptr;
+			if (logo.owner != renderer)
+				logo = MenuLogo{nullptr, renderer};
+			if (!logo.id && !logo.failed)
+			{
+				wxMemoryInputStream in(GameMode::MenuLogoData(), GameMode::MenuLogoSize());
+				wxImage image(in, wxBITMAP_TYPE_PNG);
+				if (!image.IsOk() || image.GetWidth() <= 0)
+				{
+					logo.failed = true;
+					return nullptr;
+				}
+				logo.width = image.GetWidth();
+				logo.height = image.GetHeight();
+				const uint8* rgb = image.GetData();
+				std::vector<uint8> data(rgb, rgb + (size_t)logo.width * logo.height * 3);
+				logo.id = renderer->GenerateTexture(data, {logo.width, logo.height});
+				logo.failed = logo.id == nullptr;
+			}
+			return logo.id ? &logo : nullptr;
 		}
 
 		// The menu's text sizes for a given UI scale (the font cache keys on the whole-pixel size).
@@ -618,12 +665,19 @@ namespace GameMode
 			const float drawerW = std::clamp(640 * s, std::min(340.0f, W), W * 0.92f);
 			dl->AddRectFilled(ImVec2(0, 0), ImVec2(drawerW, H), kSurfaceLow, 32 * s, ImDrawFlags_RoundCornersRight);
 
-			// header
+			// header: the Cemu logo, then the page title and the game's name
 			const float padX = 40 * s;
-			TextV(dl, titleSize, padX, 70 * s, kOnSurface, PageTitle());
-			TextV(dl, smallSize, padX, 118 * s, kOnSurfaceVariant, Ellipsize(smallSize, st.page == Page::ConfirmExit ? U8(_("The game closes along with Cemu. Unsaved progress will be lost.")) : st.gameName, drawerW - padX * 2));
+			float headerY = 0;
+			if (const MenuLogo* logo = GetMenuLogo())
+			{
+				const float logoH = 72 * s, logoW = logoH * logo->width / logo->height;
+				dl->AddImage(logo->id, ImVec2(padX - 4 * s, 28 * s), ImVec2(padX - 4 * s + logoW, 28 * s + logoH));
+				headerY = logoH + 12 * s;
+			}
+			TextV(dl, titleSize, padX, headerY + 70 * s, kOnSurface, PageTitle());
+			TextV(dl, smallSize, padX, headerY + 118 * s, kOnSurfaceVariant, Ellipsize(smallSize, st.page == Page::ConfirmExit ? U8(_("The game closes along with Cemu. Unsaved progress will be lost.")) : st.gameName, drawerW - padX * 2));
 
-			float y = 160 * s;
+			float y = headerY + 160 * s;
 			if (!st.message.empty())
 			{
 				TextV(dl, smallSize, padX, y + 14 * s, kError, Ellipsize(smallSize, st.message, drawerW - padX * 2));
@@ -701,7 +755,7 @@ namespace GameMode
 				{
 					const std::string value = Ellipsize(smallSize, item.value, (b.x - a.x) * 0.5f);
 					const float vw = TextSize(smallSize, value).x;
-					TextV(dl, smallSize, rightEdge - vw, cy, focused ? kOnSecondaryContainer : kPrimary, value);
+					TextV(dl, smallSize, rightEdge - vw, cy, focused ? kOnSecondaryContainer : kPrimaryText, value);
 					rightEdge -= vw + 16 * s;
 				}
 				TextV(dl, rowSize, labelX, cy, labelColour, Ellipsize(rowSize, item.label, rightEdge - labelX));
