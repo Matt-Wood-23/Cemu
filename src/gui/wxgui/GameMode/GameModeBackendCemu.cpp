@@ -1167,7 +1167,8 @@ namespace
 		AudioAPIPtr m_device;
 	};
 
-	bool s_startupVideoTaken = false;
+	// set at startup and whenever Game Mode is turned on; taken by the next launcher
+	bool s_bootVideoPending = true;
 }
 
 GameMode::BootVideoInfo GameModeBackendCemu::GetBootVideoInfo()
@@ -1216,10 +1217,10 @@ std::optional<wxString> GameModeBackendCemu::UseBuiltInBootVideo()
 
 std::unique_ptr<GameMode::VideoPlayer> GameModeBackendCemu::TakeStartupBootVideo()
 {
-	// Game Mode is also rebuilt after a game closes; the video belongs to Cemu starting up
-	if (s_startupVideoTaken)
+	// The launcher is also rebuilt after a game closes; the video belongs to entering Game Mode
+	if (!s_bootVideoPending)
 		return nullptr;
-	s_startupVideoTaken = true;
+	s_bootVideoPending = false;
 	if (!GetBootVideoEnabled())
 		return nullptr;
 	return OpenBootVideo();
@@ -1286,6 +1287,16 @@ void GameModeBackendCemu::PollControllerNav(std::vector<GameMode::Nav>& out)
 {
 	// No game is running while the launcher is visible, so nothing else polls the controllers.
 	m_nav.Poll(out, true);
+}
+
+void GameModeBackendCemu::QueueBootVideo()
+{
+	s_bootVideoPending = true;
+}
+
+bool GameModeBackendCemu::IsNavDown(GameMode::Nav nav)
+{
+	return m_nav.IsDown(nav);
 }
 
 void GameModeBackendCemu::ExitGameMode()

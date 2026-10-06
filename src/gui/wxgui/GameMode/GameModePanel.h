@@ -133,7 +133,13 @@ private:
 	};
 
 	// navigation
-	void HandleNav(GameMode::Nav nav);
+	// Where a press came from. Mouse clicks act at once; buttons and keys can be held, which the
+	// home screen uses for "hold to exit".
+	enum class NavSource { Pointer, Controller, Keyboard };
+	void HandleNav(GameMode::Nav nav, NavSource source = NavSource::Pointer);
+	GameMode::Nav HoldToExitNav() const;
+	void UpdateHoldToExit(wxLongLong now);
+	void OpenExitConfirm();
 	void HandleLibraryNav(GameMode::Nav nav);
 	void HandleListNav(Page& page, GameMode::Nav nav);
 	void HandleDialogNav(GameMode::Nav nav);
@@ -233,6 +239,17 @@ private:
 	wxPoint m_lastMouse{-1, -1};
 	bool m_hoverSuspended = false; // set by button presses, cleared once the mouse really moves
 	wxPoint m_hoverAnchor{-1, -1};
+
+	// Hold to exit (home screen): the press is held back until it is released (a tap does what
+	// the button normally does) or held long enough (asks to exit Game Mode).
+	struct Hold
+	{
+		bool active = false;
+		bool fired = false;
+		GameMode::Nav nav = GameMode::Nav::Back;
+		NavSource source = NavSource::Controller;
+		wxLongLong startMs = 0;
+	} m_hold;
 	std::vector<GameMode::Nav> m_navScratch;
 	std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };

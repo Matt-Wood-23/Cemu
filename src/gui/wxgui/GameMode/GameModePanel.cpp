@@ -7,6 +7,7 @@
 #include <wx/graphics.h>
 #include <wx/mstream.h>
 #include <wx/time.h>
+#include <wx/utils.h>
 
 #include <algorithm>
 #include <cmath>
@@ -188,6 +189,8 @@ namespace
 		return wxGetUTCTimeMillis();
 	}
 
+	// home screen: hold B (Back) this long to be asked to exit Game Mode
+	constexpr int kHoldToExitMs = 800;
 	// A choice or confirm dialog ignores A/B for this long after it opens
 	constexpr int kDialogInputDelayMs = 250;
 	// after a button press, the pointer has to travel this far before hovering moves the focus
@@ -198,6 +201,7 @@ namespace
 	constexpr int kHintLast = kHintBase - 7;
 	constexpr int kHitBackArrow = -50;
 	constexpr int kHitSettingsChip = -51;
+	constexpr int kHitExitChip = -52;
 	constexpr int kHitOutsideDialog = -52;
 	constexpr int kHitDialogCard = -53;
 	constexpr int kHitNone = -1000;
@@ -621,10 +625,7 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 		exit.label = _("Exit Game Mode");
 		exit.description = _("Return to the regular Cemu window");
 		exit.danger = true;
-		exit.action = [this]() {
-			OpenConfirmDialog(_("Exit Game Mode?"), _("You can come back to it from View > Game Mode."),
-				[this]() { m_backend->ExitGameMode(); });
-		};
+		exit.action = [this]() { OpenExitConfirm(); };
 		rows.push_back(exit);
 		return rows;
 	};
@@ -1001,6 +1002,12 @@ void GameModePanel::OpenChoiceDialog(const wxString& title, const GameMode::Choi
 	Refresh();
 }
 
+void GameModePanel::OpenExitConfirm()
+{
+	OpenConfirmDialog(_("Exit Game Mode?"), _("You can come back to it from View > Game Mode."),
+		[this]() { m_backend->ExitGameMode(); });
+}
+
 void GameModePanel::OpenConfirmDialog(const wxString& title, const wxString& message, std::function<void()> onYes)
 {
 	m_dialog = Dialog{};
@@ -1257,7 +1264,40 @@ void GameModePanel::ShowToast(const wxString& message)
 // ---------------------------------------------------------------------------------------------
 // navigation
 
-void GameModePanel::HandleNav(Nav nav)
+// The button behind hold-to-exit: B (Back), which has nothing else to do on the home screen.
+// It follows "Swap A and B" and each player's mapping like every other menu button.
+Nav GameModePanel::HoldToExitNav() const
+{
+	return Nav::Back;
+}
+
+void GameModePanel::UpdateHoldToExit(wxLongLong now)
+{
+	if (!m_hold.active)
+		return;
+	bool down;
+	if (m_hold.source == NavSource::Controller)
+		down = m_backend->IsNavDown(m_hold.nav);
+	else // a key that cannot be read back counts as released, so it simply acts as a tap
+		down = wxGetKeyState(WXK_ESCAPE) || wxGetKeyState(WXK_BACK);
+	if (!down)
+	{
+		const Hold hold = m_hold;
+		m_hold = Hold{};
+		// a short press does what the button always did, once it is let go
+		if (!hold.fired && !m_video && m_dialog.type == Dialog::Type::None && m_pages.size() == 1)
+			HandleLibraryNav(hold.nav);
+	}
+	else if (!m_hold.fired && now - m_hold.startMs >= kHoldToExitMs)
+	{
+		m_hold.fired = true;
+		if (m_dialog.type == Dialog::Type::None && m_pages.size() == 1)
+			OpenExitConfirm();
+	}
+	Refresh(); // the chip's fill follows the hold
+}
+
+void GameModePanel::HandleNav(Nav nav, NavSource source)
 {
 	// A resting mouse that twitches (or a trackpad) must not drag the focus back to whatever is
 	// under the pointer, such as Cancel after you moved to OK with the controller.
@@ -1274,6 +1314,20 @@ void GameModePanel::HandleNav(Nav nav)
 		return;
 	}
 	Page& page = CurrentPage();
+	if (page.isLibrary && source != NavSource::Pointer && nav == HoldToExitNav())
+	{
+		// wait to see whether it is a tap or a hold (UpdateHoldToExit)
+		if (!m_hold.active)
+		{
+			m_hold = Hold{};
+			m_hold.active = true;
+			m_hold.nav = nav;
+			m_hold.source = source;
+			m_hold.startMs = NowMs();
+		}
+		Refresh();
+		return;
+	}
 	if (page.isLibrary)
 		HandleLibraryNav(nav);
 	else
@@ -1317,7 +1371,7 @@ void GameModePanel::HandleLibraryNav(Nav nav)
 		PushPage(MakeSettingsPage());
 		break;
 	case Nav::Back:
-		ShowToast(_("Exit Game Mode from Settings"));
+		ShowToast(_("Hold to exit Game Mode"));
 		break;
 	}
 }
@@ -1584,8 +1638,9 @@ void GameModePanel::OnTimer(wxTimerEvent& event)
 		m_navScratch.clear();
 		m_backend->PollControllerNav(m_navScratch);
 		for (Nav nav : m_navScratch)
-			HandleNav(nav);
+			HandleNav(nav, NavSource::Controller);
 	}
+	UpdateHoldToExit(now);
 
 	// keep the game list current while a scan is running and once more when it ends
 	if (++m_scanTick >= 60)
@@ -1737,13 +1792,13 @@ void GameModePanel::OnKeyDown(wxKeyEvent& event)
 		break;
 	case WXK_ESCAPE:
 	case WXK_BACK:
-		HandleNav(Nav::Back);
+		HandleNav(Nav::Back, NavSource::Keyboard);
 		break;
 	case 'X':
-		HandleNav(Nav::Options);
+		HandleNav(Nav::Options, NavSource::Keyboard);
 		break;
 	case 'Y':
-		HandleNav(Nav::Settings);
+		HandleNav(Nav::Settings, NavSource::Keyboard);
 		break;
 	default:
 		event.Skip();
@@ -1853,6 +1908,11 @@ void GameModePanel::OnMouseDown(wxMouseEvent& event)
 	if (hit == kHitSettingsChip)
 	{
 		HandleNav(Nav::Settings);
+		return;
+	}
+	if (hit == kHitExitChip)
+	{
+		OpenExitConfirm();
 		return;
 	}
 	if (m_dialog.type == Dialog::Type::Text)
@@ -2227,6 +2287,27 @@ void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
 		DrawTextV(gc, chipText, chipX + S(16) + chipGlyphW + S(12), cy);
 		m_hitRects.push_back({wxRect((int)chipX, (int)(cy - chipH / 2), (int)chipW, (int)chipH), kHitSettingsChip});
 
+		// hold-to-exit chip, outlined, filling up while the button is held (also clickable)
+		const Nav holdNav = HoldToExitNav();
+		const wxString exitText = _("Hold to exit");
+		const double exitGlyphW = GlyphWidth(gc, holdNav, S(18));
+		gc->SetFont(MakeFont(S(26), true), kOnSurfaceVariant);
+		const double exitW = TextWidth(gc, exitText) + exitGlyphW + S(28) + S(40);
+		const double exitX = chipX - S(16) - exitW;
+		if (m_hold.active && !m_hold.fired)
+		{
+			const double t = std::clamp((NowMs() - m_hold.startMs).ToDouble() / kHoldToExitMs, 0.0, 1.0);
+			gc->PushState();
+			gc->Clip(exitX, cy - chipH / 2, exitW * t, chipH);
+			FillRounded(gc, exitX, cy - chipH / 2, exitW, chipH, chipH / 2, kSecondaryContainer);
+			gc->PopState();
+		}
+		StrokeRounded(gc, exitX, cy - chipH / 2, exitW, chipH, chipH / 2, kOutline, S(2));
+		DrawGlyph(gc, holdNav, exitX + S(16), cy, S(18));
+		gc->SetFont(MakeFont(S(26), true), kOnSurfaceVariant);
+		DrawTextV(gc, exitText, exitX + S(16) + exitGlyphW + S(12), cy);
+		m_hitRects.push_back({wxRect((int)exitX, (int)(cy - chipH / 2), (int)exitW, (int)chipH), kHitExitChip});
+
 		wxString status;
 		if (m_backend->IsScanningGames())
 			status = _("Looking for games...");
@@ -2235,7 +2316,7 @@ void GameModePanel::DrawTopBar(wxGraphicsContext* gc, const wxRect& area)
 		if (!status.empty())
 		{
 			gc->SetFont(MakeFont(S(24)), kOnSurfaceVariant);
-			DrawTextV(gc, status, chipX - S(28) - TextWidth(gc, status), cy);
+			DrawTextV(gc, status, exitX - S(28) - TextWidth(gc, status), cy);
 		}
 		return;
 	}

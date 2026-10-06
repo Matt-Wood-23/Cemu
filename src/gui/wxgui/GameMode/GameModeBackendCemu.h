@@ -97,6 +97,9 @@ public:
 	void OpenBootFolder() override;
 
 	void PollControllerNav(std::vector<GameMode::Nav>& out) override;
+	bool IsNavDown(GameMode::Nav nav) override;
+	// Game Mode was turned on: the next launcher plays the boot video (if enabled)
+	static void QueueBootVideo();
 	void ExitGameMode() override;
 
 private:

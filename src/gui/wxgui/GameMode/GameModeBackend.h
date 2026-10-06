@@ -200,7 +200,8 @@ namespace GameMode
 		// Goes back to the built-in video: the custom boot.mp4 / boot.webm are renamed to
 		// boot.old.mp4 / boot.old.webm (not deleted). Returns an error message on failure.
 		virtual std::optional<wxString> UseBuiltInBootVideo() = 0;
-		// The video to play as Game Mode starts: only the first time per run, and when enabled.
+		// The video to play as Game Mode starts (when enabled): when Cemu starts in Game Mode and
+		// each time Game Mode is turned back on, not when the launcher returns after a game.
 		virtual std::unique_ptr<VideoPlayer> TakeStartupBootVideo() = 0;
 		// Opens the boot video now (Preview). Null when it cannot be played.
 		virtual std::unique_ptr<VideoPlayer> OpenBootVideo() = 0;
@@ -213,6 +214,8 @@ namespace GameMode
 		// Called every frame; appends navigation edges from the players' controllers (with repeat
 		// for held directions). Keyboard and mouse are handled by the panel itself.
 		virtual void PollControllerNav(std::vector<Nav>& out) = 0;
+		// Whether a menu action's button is held on any player's controller (as of the last poll).
+		virtual bool IsNavDown(Nav nav) = 0;
 
 		// ---- Game Mode ----
 		virtual void ExitGameMode() = 0;

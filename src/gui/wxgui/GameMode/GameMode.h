@@ -60,6 +60,8 @@ namespace GameMode
 		// True if any button on any of the players' controllers is held (after the last Poll),
 		// not only the navigation ones, e.g. a Guide button that is also mapped to HOME.
 		bool AnyDown() const;
+		// True if this action's button is held (after the last Poll)
+		bool IsDown(Nav nav) const { return m_down[(int)nav]; }
 
 	private:
 		static constexpr int kCount = 8;

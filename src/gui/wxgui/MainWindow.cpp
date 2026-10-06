@@ -808,6 +808,8 @@ void MainWindow::SetGameModeEnabled(bool enabled)
 		return;
 	config.game_mode = enabled;
 	g_wxConfig.Save();
+	if (enabled)
+		GameModeBackendCemu::QueueBootVideo(); // plays again each time Game Mode is turned on
 	if (!m_game_launched)
 	{
 		// swap the game list and the launcher
