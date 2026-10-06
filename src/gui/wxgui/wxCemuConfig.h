@@ -82,6 +82,7 @@ struct wxCemuConfig
 	ConfigValue<bool> fullscreen_menubar{false};
 	ConfigValue<bool> game_mode{false}; // View > Game Mode
 	ConfigValue<bool> game_mode_boot{false}; // start in Game Mode even after leaving it
+	ConfigValue<bool> pause_on_focus_loss{false}; // pause the game while Cemu is in the background (or the PC goes to sleep)
 	ConfigValue<sint32> game_mode_buttons{0}; // GameMode::ButtonStyle of the button hints
 	ConfigValue<bool> game_mode_swap_ab{false}; // Game Mode menus: B selects, A goes back (games unaffected)
 	ConfigValue<bool> game_mode_boot_video{true}; // play the boot video (built in, or boot/boot.mp4 / .webm) before Game Mode opens

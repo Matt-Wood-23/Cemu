@@ -1276,6 +1276,16 @@ void GameModeBackendCemu::SetSwapAB(bool swap)
 	GameMode::SetSwapAB(swap);
 }
 
+bool GameModeBackendCemu::GetPauseOnFocusLoss()
+{
+	return GetWxGUIConfig().pause_on_focus_loss;
+}
+
+void GameModeBackendCemu::SetPauseOnFocusLoss(bool enabled)
+{
+	m_mainWindow->SetPauseOnFocusLoss(enabled);
+}
+
 GameMode::Face GameModeBackendCemu::GetNavFace(GameMode::Nav nav)
 {
 	return GameMode::FaceForNav(nav);

@@ -14,6 +14,7 @@
 #include "util/SystemInfo/SystemInfo.h"
 
 #include <cinttypes>
+#include <cfloat>
 
 struct OverlayStats
 {
@@ -509,6 +510,32 @@ void LatteOverlay_translateScreenPosition(ScreenPosition pos, const Vector2f& wi
 	default:
 		UNREACHABLE;
 	}
+}
+
+void LatteOverlay_renderPaused(bool pad_view)
+{
+	sint32 w = 0, h = 0;
+	if (pad_view && WindowSystem::IsPadWindowOpen())
+		WindowSystem::GetPadWindowPhysSize(w, h);
+	else
+		WindowSystem::GetWindowPhysSize(w, h);
+	if (w == 0 || h == 0)
+		return;
+	const float dpi = !pad_view ? WindowSystem::GetWindowDPIScale() : WindowSystem::GetPadDPIScale();
+	const float fontSize = std::round(30.0f * dpi);
+	ImFont* font = ImGui_GetFont(fontSize); // requested now, ready on a later frame
+	// below every ImGui window (notifications, the Game Menu), above the game picture
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+	dl->AddRectFilled(ImVec2(0, 0), ImVec2((float)w, (float)h), IM_COL32(0, 0, 0, 110));
+	if (!font)
+		return;
+	const char* text = "Paused";
+	const ImVec2 size = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+	const float padX = fontSize * 0.9f, padY = fontSize * 0.45f;
+	const ImVec2 min((w - size.x) / 2 - padX, h * 0.12f);
+	const ImVec2 max(min.x + size.x + padX * 2, min.y + size.y + padY * 2);
+	dl->AddRectFilled(min, max, IM_COL32(0x1D, 0x1B, 0x20, 0xE6), (max.y - min.y) / 2);
+	dl->AddText(font, fontSize, ImVec2(min.x + padX, min.y + padY), IM_COL32(0xE6, 0xE0, 0xE9, 0xFF), text);
 }
 
 void LatteOverlay_render(bool pad_view)

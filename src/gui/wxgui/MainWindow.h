@@ -16,6 +16,7 @@
 #include <set>
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/CafeSystem.h"
+#include <wx/power.h> // wxHAS_POWER_EVENTS, wxPowerEvent
 
 class DebuggerWindow2;
 struct GameEntry;
@@ -83,6 +84,11 @@ public:
 	bool IsGameModeEnabled() const;
 	void SetGameModeEnabled(bool enabled);
 	void ApplyGameModeFullscreen(bool fullscreen);
+
+	// Pause / resume the running game (File > Pause emulation, the Game Menu). UI thread.
+	void SetEmulationPaused(bool paused);
+	// Options > Pause on focus loss / standby (also in the Game Menu and Game Mode's settings)
+	void SetPauseOnFocusLoss(bool enabled);
 
 #if BOOST_OS_WINDOWS
 	WXLRESULT MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam) override;
@@ -186,6 +192,17 @@ private:
 
 	bool m_menu_visible = false;
 	bool m_game_launched = false;
+
+	// pause on focus loss / standby
+	void OnAppActivate(wxActivateEvent& event);
+	void OnIconize(wxIconizeEvent& event);
+#ifdef wxHAS_POWER_EVENTS
+	void OnPowerSuspending(wxPowerEvent& event);
+#endif
+	void OnPauseMenu(wxCommandEvent& event);
+	void PauseForFocusLoss();
+	bool m_autoPaused = false; // paused because Cemu went to the background: resumes on return
+	wxMenuItem* m_pauseMenuItem = nullptr;
 
 	#ifdef ENABLE_DISCORD_RPC
 	std::unique_ptr<DiscordPresence> m_discord;

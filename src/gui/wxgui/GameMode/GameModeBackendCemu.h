@@ -87,6 +87,8 @@ public:
 	void SetButtonStyle(GameMode::ButtonStyle style) override;
 	bool GetSwapAB() override;
 	void SetSwapAB(bool swap) override;
+	bool GetPauseOnFocusLoss() override;
+	void SetPauseOnFocusLoss(bool enabled) override;
 	GameMode::Face GetNavFace(GameMode::Nav nav) override;
 	GameMode::BootVideoInfo GetBootVideoInfo() override;
 	bool GetBootVideoEnabled() override;

@@ -192,6 +192,9 @@ namespace GameMode
 		// Game Mode menus only: B selects and A goes back. Games keep their own mapping.
 		virtual bool GetSwapAB() = 0;
 		virtual void SetSwapAB(bool swap) = 0;
+		// pause the game while Cemu is in the background or the PC goes to sleep
+		virtual bool GetPauseOnFocusLoss() = 0;
+		virtual void SetPauseOnFocusLoss(bool enabled) = 0;
 		// Boot video, played before the launcher appears: built into Cemu, unless the user puts
 		// boot/boot.mp4 or boot/boot.webm in the Cemu folder, which then plays instead.
 		virtual BootVideoInfo GetBootVideoInfo() = 0;

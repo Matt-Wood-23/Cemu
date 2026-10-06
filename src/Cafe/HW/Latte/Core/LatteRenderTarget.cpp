@@ -17,6 +17,7 @@
 #include "Cafe/OS/libs/erreula/erreula.h"
 #include "input/InputManager.h"
 #include "Cafe/OS/libs/swkbd/swkbd.h"
+#include "Cafe/CafeSystem.h"
 
 uint32 prevScissorX = 0;
 uint32 prevScissorY = 0;
@@ -1048,12 +1049,59 @@ void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPa
 	swkbd_render(!isPadView);
 	nn::erreula::render(!isPadView);
 	LatteOverlay_render(isPadView);
+	if (CafeSystem::IsTitlePaused())
+		LatteOverlay_renderPaused(isPadView);
 	WindowSystem::RenderGameMenu(!isPadView); // Game Mode's in-game menu, drawn above everything
 	g_renderer->ImguiEnd();
 }
 
+// The last copy to each scan buffer (TV, DRC), replayed while the title is paused so the picture
+// and the overlays keep being drawn. Replaying looks the texture up again by address, so nothing
+// is held that the texture cache could free in the meantime.
+namespace
+{
+	struct ScanBufferCopy
+	{
+		bool valid = false;
+		MPTR colorBufferPtr;
+		uint32 width, height, sliceIndex, format, pitch;
+		Latte::E_HWTILEMODE tilemode;
+		uint32 swizzle, renderTarget;
+	};
+	ScanBufferCopy s_lastScanBufferCopy[2]; // TV, DRC
+}
+
+void LatteRenderTarget_presentWhilePaused()
+{
+	static auto s_lastPresent = std::chrono::steady_clock::now();
+	const auto now = std::chrono::steady_clock::now();
+	if (now - s_lastPresent < std::chrono::milliseconds(33))
+		return;
+	s_lastPresent = now;
+	const ScanBufferCopy copies[2] = {s_lastScanBufferCopy[0], s_lastScanBufferCopy[1]};
+	if (!copies[0].valid && !copies[1].valid)
+		return;
+	for (int i = 0; i < 2; i++)
+	{
+		const ScanBufferCopy& c = copies[i];
+		if (!c.valid)
+			continue;
+		if (i == 1 && copies[0].valid && copies[0].renderTarget == c.renderTarget && copies[0].colorBufferPtr == c.colorBufferPtr)
+			continue; // one copy went to both
+		LatteRenderTarget_itHLECopyColorBufferToScanBuffer(c.colorBufferPtr, c.width, c.height, c.sliceIndex, c.format, c.pitch, c.tilemode, c.swizzle, c.renderTarget);
+	}
+	g_renderer->SwapBuffers(true, true);
+}
+
 void LatteRenderTarget_itHLECopyColorBufferToScanBuffer(MPTR colorBufferPtr, uint32 colorBufferWidth, uint32 colorBufferHeight, uint32 colorBufferSliceIndex, uint32 colorBufferFormat, uint32 colorBufferPitch, Latte::E_HWTILEMODE colorBufferTilemode, uint32 colorBufferSwizzle, uint32 renderTarget)
 {
+	{
+		const ScanBufferCopy copy{true, colorBufferPtr, colorBufferWidth, colorBufferHeight, colorBufferSliceIndex, colorBufferFormat, colorBufferPitch, colorBufferTilemode, colorBufferSwizzle, renderTarget};
+		if (renderTarget & RENDER_TARGET_TV)
+			s_lastScanBufferCopy[0] = copy;
+		if (renderTarget & RENDER_TARGET_DRC)
+			s_lastScanBufferCopy[1] = copy;
+	}
 	cemu_assert_debug(colorBufferSliceIndex == 0); // todo - support for non-zero slice
 	LatteTextureView* texView = LatteTC_GetTextureSliceViewOrTryCreate(colorBufferPtr, MPTR_NULL, (Latte::E_GX2SURFFMT)colorBufferFormat, colorBufferTilemode, colorBufferWidth, colorBufferHeight, 1, colorBufferPitch, colorBufferSwizzle, 0, 0, true);
 	if (!texView)

@@ -612,6 +612,10 @@ namespace coreinit
 	void OSSchedulerEnd();
 	bool OSIsSchedulerActive();
 
+	// pause support: suspend / resume every active thread (each keeps its own suspend count)
+	void SuspendActiveThreads();
+	void ResumeActiveThreads();
+
 	// internal
 	void __OSAddReadyThreadToRunQueue(OSThread_t* thread);
 	bool __OSCoreShouldSwitchToThread(OSThread_t* currentThread, OSThread_t* newThread, bool sharedPriorityAndAffinityWorkaround);

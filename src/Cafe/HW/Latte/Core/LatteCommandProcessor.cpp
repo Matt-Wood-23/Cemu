@@ -137,6 +137,14 @@ void LatteCP_signalEnterWait()
 	LatteIndices_invalidateAll();
 }
 
+// The title is paused: no commands or fences will arrive until it resumes. Sleep instead of
+// spinning, and keep presenting the last frame so the overlays and the Game Menu stay usable.
+static void LatteCP_idleWhilePaused()
+{
+	std::this_thread::sleep_for(std::chrono::milliseconds(8));
+	LatteRenderTarget_presentWhilePaused();
+}
+
 /*
 * Read a U32 from the command buffer
 * If no data is available then wait in a busy loop
@@ -167,7 +175,10 @@ uint32 LatteCP_readU32Deprc()
 		// still no command data available, do some other tasks
 		LatteTiming_HandleTimedVsync();
 		LatteAsyncCommands_checkAndExecute();
-		std::this_thread::yield();
+		if (CafeSystem::IsTitlePaused())
+			LatteCP_idleWhilePaused();
+		else
+			std::this_thread::yield();
 		performanceMonitor.gpuTime_idleTime.endMeasuring();
 	}
 	UNREACHABLE;
@@ -478,6 +489,8 @@ LatteCMDPtr LatteCP_itWaitRegMem(LatteCMDPtr cmd, uint32 nWords)
 			// check if any GPU events happened
 			LatteTiming_HandleTimedVsync();
 			LatteAsyncCommands_checkAndExecute();
+			if (CafeSystem::IsTitlePaused())
+				LatteCP_idleWhilePaused();
 		}
 		performanceMonitor.gpuTime_fenceTime.endMeasuring();
 	}
@@ -584,7 +597,9 @@ LatteCMDPtr LatteCP_itMemSemaphore(LatteCMDPtr cmd, uint32 nWords)
 			if (oldVal == 0)
 			{
 				loopCount++;
-				if (loopCount > 2000)
+				if (CafeSystem::IsTitlePaused())
+					LatteCP_idleWhilePaused();
+				else if (loopCount > 2000)
 					std::this_thread::yield();
 				continue;
 			}
@@ -916,7 +931,10 @@ LatteCMDPtr LatteCP_itHLEWaitForFlip(LatteCMDPtr cmd, uint32 nWords)
 		}
 		// check if any GPU events happened
 		LatteTiming_HandleTimedVsync();
-		std::this_thread::yield();
+		if (CafeSystem::IsTitlePaused())
+			LatteCP_idleWhilePaused();
+		else
+			std::this_thread::yield();
 	}
 	return cmd;
 }

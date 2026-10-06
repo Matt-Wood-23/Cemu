@@ -94,6 +94,40 @@ namespace coreinit
 		uint32 selectedCore;
 	};
 
+	// Set while the title is paused (every thread suspended): the scheduler's idle loop then
+	// sleeps between checks instead of spinning, so a paused game barely uses the CPU.
+	std::atomic_bool s_activeThreadsSuspended = false;
+
+	void SuspendActiveThreads()
+	{
+		__OSLockScheduler();
+		s_activeThreadsSuspended = true;
+		for (sint32 i = 0; i < activeThreadCount; i++)
+		{
+			auto thread = reinterpret_cast<OSThread_t*>(memory_getPointerFromVirtualOffset(activeThread[i]));
+			if (thread->state == OSThread_t::THREAD_STATE::STATE_NONE || thread->state == OSThread_t::THREAD_STATE::STATE_MORIBUND)
+				continue;
+			__OSSuspendThreadNolock(thread);
+		}
+		__OSUnlockScheduler();
+	}
+
+	void ResumeActiveThreads()
+	{
+		__OSLockScheduler();
+		s_activeThreadsSuspended = false;
+		for (sint32 i = 0; i < activeThreadCount; i++)
+		{
+			auto thread = reinterpret_cast<OSThread_t*>(memory_getPointerFromVirtualOffset(activeThread[i]));
+			// the same threads SuspendActiveThreads suspended (no game code ran in between)
+			if (thread->state == OSThread_t::THREAD_STATE::STATE_NONE || thread->state == OSThread_t::THREAD_STATE::STATE_MORIBUND)
+				continue;
+			if (thread->suspendCounter > 0)
+				__OSResumeThreadInternal(thread, 1);
+		}
+		__OSUnlockScheduler();
+	}
+
 	std::unordered_map<OSThread_t*, OSHostThread*> s_threadToFiber;
 
 	bool __CemuIsMulticoreMode()
@@ -1271,6 +1305,8 @@ namespace coreinit
 				__OSCheckSystemEvents();
 				if(g_isMulticoreMode == false)
 					coreIndex = (coreIndex + 1) % 3;
+				if (s_activeThreadsSuspended.load(std::memory_order::relaxed))
+					std::this_thread::sleep_for(std::chrono::milliseconds(10)); // paused
 			}
 			else
 			{

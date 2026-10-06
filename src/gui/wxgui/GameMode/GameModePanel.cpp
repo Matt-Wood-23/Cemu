@@ -620,6 +620,14 @@ GameModePanel::Page GameModePanel::MakeSettingsPage()
 		swap.setBool = [this](bool v) { m_backend->SetSwapAB(v); };
 		rows.push_back(swap);
 
+		Row focusPause;
+		focusPause.kind = RowKind::Toggle;
+		focusPause.label = _("Pause on focus loss / standby");
+		focusPause.description = _("Pause the game while Cemu is in the background or the PC sleeps. Also in the Game Menu.");
+		focusPause.getBool = [this]() { return m_backend->GetPauseOnFocusLoss(); };
+		focusPause.setBool = [this](bool v) { m_backend->SetPauseOnFocusLoss(v); };
+		rows.push_back(focusPause);
+
 		Row exit;
 		exit.kind = RowKind::Action;
 		exit.label = _("Exit Game Mode");

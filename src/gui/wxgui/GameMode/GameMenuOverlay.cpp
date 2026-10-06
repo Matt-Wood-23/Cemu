@@ -340,6 +340,23 @@ namespace GameMode
 			});
 		}
 
+		// Pause / resume goes through the main window so File > Pause emulation stays in step
+		void SetPaused(bool paused)
+		{
+			wxTheApp->CallAfter([paused]() {
+				if (g_mainFrame)
+					g_mainFrame->SetEmulationPaused(paused);
+			});
+		}
+
+		void SetPauseOnFocusLoss(bool enabled)
+		{
+			wxTheApp->CallAfter([enabled]() {
+				if (g_mainFrame)
+					g_mainFrame->SetPauseOnFocusLoss(enabled);
+			});
+		}
+
 		// Closes Cemu the same way File > Exit does. Stopping only the game and staying in Cemu
 		// is not offered: starting another game afterwards is not reliable.
 		void ExitCemu()
@@ -362,9 +379,25 @@ namespace GameMode
 			case Page::Main:
 			{
 				Item resume;
-				resume.label = U8(_("Resume"));
+				resume.label = U8(_("Back to game"));
 				resume.activate = []() { Close(); };
 				items.push_back(resume);
+
+				Item pause;
+				pause.kind = ItemKind::Toggle;
+				pause.label = U8(_("Pause emulation"));
+				pause.on = CafeSystem::IsTitlePaused();
+				pause.activate = []() { SetPaused(!CafeSystem::IsTitlePaused()); };
+				pause.adjust = [](int dir) { SetPaused(dir > 0); };
+				items.push_back(pause);
+
+				Item focusPause;
+				focusPause.kind = ItemKind::Toggle;
+				focusPause.label = U8(_("Pause on focus loss / standby"));
+				focusPause.on = GetWxGUIConfig().pause_on_focus_loss;
+				focusPause.activate = []() { SetPauseOnFocusLoss(!GetWxGUIConfig().pause_on_focus_loss); };
+				focusPause.adjust = [](int dir) { SetPauseOnFocusLoss(dir > 0); };
+				items.push_back(focusPause);
 
 				Item layout;
 				layout.kind = ItemKind::Link;
@@ -659,6 +692,9 @@ namespace GameMode
 			if (height > 0)
 				RequestMenuFonts(MenuScale(height)); // built in the background, ready when the menu opens
 		}
+		// While paused the game does not read the controllers, so read them here: that keeps the
+		// Game Menu button (and the menu itself) working.
+		const bool paused = mainWindow && CafeSystem::IsTitlePaused();
 		if (!open)
 		{
 			if (st.wasOpen)
@@ -667,9 +703,14 @@ namespace GameMode
 			if (mainWindow && IsGameInputBlocked())
 			{
 				std::vector<Nav> ignored;
-				st.nav.Poll(ignored, false);
+				st.nav.Poll(ignored, paused);
 				if (!st.nav.AnyDown())
 					ClearReleasePending();
+			}
+			else if (paused)
+			{
+				std::vector<Nav> ignored;
+				st.nav.Poll(ignored, true);
 			}
 			return;
 		}
@@ -691,7 +732,7 @@ namespace GameMode
 
 		// input: the players' controllers (the game polls them; its reads are blocked) and keys
 		std::vector<Nav> navs;
-		st.nav.Poll(navs, false);
+		st.nav.Poll(navs, paused);
 		Nav queued;
 		while (TakeMenuNav(queued))
 			navs.push_back(queued);

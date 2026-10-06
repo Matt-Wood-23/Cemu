@@ -448,6 +448,8 @@ namespace CafeSystem
 	std::optional<std::vector<std::string>> s_overrideArgs;
 
 	bool sSystemRunning = false;
+	std::atomic_bool sTitlePaused = false;
+	std::mutex sPauseMutex;
 	TitleId sForegroundTitleId = 0;
 
 	GameInfo2 sGameInfo_ForegroundTitle;
@@ -914,6 +916,34 @@ namespace CafeSystem
 		return sSystemRunning;
 	}
 
+	void PauseTitle()
+	{
+		std::lock_guard lock(sPauseMutex);
+		if (!sSystemRunning || sTitlePaused)
+			return;
+		sTitlePaused = true;
+		coreinit::SuspendActiveThreads();
+		// stop the audio streams so the device can idle; they restart by themselves once the
+		// game produces sound again
+		snd_core::AXOut_updateDevicePlayState(false);
+		cemuLog_log(LogType::Force, "Emulation paused");
+	}
+
+	void ResumeTitle()
+	{
+		std::lock_guard lock(sPauseMutex);
+		if (!sSystemRunning || !sTitlePaused)
+			return;
+		sTitlePaused = false;
+		coreinit::ResumeActiveThreads();
+		cemuLog_log(LogType::Force, "Emulation resumed");
+	}
+
+	bool IsTitlePaused()
+	{
+		return sTitlePaused;
+	}
+
 	TitleId GetForegroundTitleId()
 	{
 		cemu_assert_debug(sForegroundTitleId != 0);
@@ -1047,6 +1077,7 @@ namespace CafeSystem
 	{
 		if(!sSystemRunning)
 			return;
+		ResumeTitle(); // shut down from a running state
         CheatManager::OnTitleStop();
         coreinit::OSSchedulerEnd();
         Latte_Stop();

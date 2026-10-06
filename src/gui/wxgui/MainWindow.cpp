@@ -87,6 +87,7 @@ enum
 	MAINFRAME_MENU_ID_FILE_END_EMULATION,
 	MAINFRAME_MENU_ID_FILE_RECENT_0,
 	MAINFRAME_MENU_ID_FILE_RECENT_LAST = MAINFRAME_MENU_ID_FILE_RECENT_0 + 15,
+	MAINFRAME_MENU_ID_FILE_PAUSE_EMULATION = 20190,
 	// options
 	MAINFRAME_MENU_ID_OPTIONS_FULLSCREEN = 20200,
 	MAINFRAME_MENU_ID_OPTIONS_SECOND_WINDOW_PADVIEW,
@@ -98,6 +99,7 @@ enum
 	MAINFRAME_MENU_ID_OPTIONS_INPUT,
 	MAINFRAME_MENU_ID_OPTIONS_HOTKEY,
 	MAINFRAME_MENU_ID_OPTIONS_MAC_SETTINGS,
+	MAINFRAME_MENU_ID_OPTIONS_PAUSE_ON_FOCUS_LOSS = 20290,
 	// options -> account
 	MAINFRAME_MENU_ID_OPTIONS_ACCOUNT_1 = 20350,
 	MAINFRAME_MENU_ID_OPTIONS_ACCOUNT_12 = 20350 + 11,
@@ -193,6 +195,8 @@ EVT_MENU(MAINFRAME_MENU_ID_FILE_OPEN_SHADERCACHE_FOLDER, MainWindow::OnOpenFolde
 EVT_MENU(MAINFRAME_MENU_ID_FILE_CLEAR_SPOTPASS_CACHE, MainWindow::OnClearSpotPassCache)
 EVT_MENU(MAINFRAME_MENU_ID_FILE_EXIT, MainWindow::OnFileExit)
 EVT_MENU(MAINFRAME_MENU_ID_FILE_END_EMULATION, MainWindow::OnFileMenu)
+EVT_MENU(MAINFRAME_MENU_ID_FILE_PAUSE_EMULATION, MainWindow::OnPauseMenu)
+EVT_MENU(MAINFRAME_MENU_ID_OPTIONS_PAUSE_ON_FOCUS_LOSS, MainWindow::OnPauseMenu)
 EVT_MENU_RANGE(MAINFRAME_MENU_ID_FILE_RECENT_0 + 0, MAINFRAME_MENU_ID_FILE_RECENT_LAST, MainWindow::OnFileMenu)
 // options -> region menu
 EVT_MENU_RANGE(MAINFRAME_MENU_ID_OPTIONS_ACCOUNT_1, MAINFRAME_MENU_ID_OPTIONS_ACCOUNT_12, MainWindow::OnAccountSelect)
@@ -398,6 +402,13 @@ MainWindow::MainWindow()
 	#endif
 
 	Bind(wxEVT_OPEN_GRAPHIC_PACK, &MainWindow::OnGraphicWindowOpen, this);
+
+	// pause on focus loss / standby
+	wxTheApp->Bind(wxEVT_ACTIVATE_APP, &MainWindow::OnAppActivate, this);
+	Bind(wxEVT_ICONIZE, &MainWindow::OnIconize, this);
+#ifdef wxHAS_POWER_EVENTS
+	Bind(wxEVT_POWER_SUSPENDING, &MainWindow::OnPowerSuspending, this);
+#endif
 	Bind(wxEVT_LAUNCH_GAME, &MainWindow::OnLaunchFromFile, this);
 
 	if (LaunchSettings::GDBStubEnabled())
@@ -408,6 +419,7 @@ MainWindow::MainWindow()
 
 MainWindow::~MainWindow()
 {
+	wxTheApp->Unbind(wxEVT_ACTIVATE_APP, &MainWindow::OnAppActivate, this);
 	if (m_padView)
 	{
 		m_padView->Destroy();
@@ -828,6 +840,79 @@ void MainWindow::SetGameModeEnabled(bool enabled)
 		SetMenuVisible(true);
 	}
 }
+
+void MainWindow::SetEmulationPaused(bool paused)
+{
+	m_autoPaused = false;
+	if (m_game_launched && CafeSystem::IsTitleRunning())
+	{
+		if (paused)
+			CafeSystem::PauseTitle();
+		else
+			CafeSystem::ResumeTitle();
+	}
+	if (m_pauseMenuItem)
+		m_pauseMenuItem->Check(CafeSystem::IsTitlePaused());
+}
+
+void MainWindow::SetPauseOnFocusLoss(bool enabled)
+{
+	GetWxGUIConfig().pause_on_focus_loss = enabled;
+	g_wxConfig.Save();
+	RecreateMenu(); // the Options menu check mark
+}
+
+void MainWindow::OnPauseMenu(wxCommandEvent& event)
+{
+	const bool checked = event.IsChecked();
+	if (event.GetId() == MAINFRAME_MENU_ID_FILE_PAUSE_EMULATION)
+		SetEmulationPaused(checked);
+	else
+	{
+		GetWxGUIConfig().pause_on_focus_loss = checked;
+		g_wxConfig.Save();
+	}
+}
+
+// Cemu went to the background (another app, minimised, the screen locked): with the setting on,
+// the game pauses and resumes once Cemu is back in front. A pause chosen by hand is left alone.
+void MainWindow::PauseForFocusLoss()
+{
+	if (!GetWxGUIConfig().pause_on_focus_loss || !m_game_launched || !CafeSystem::IsTitleRunning() || CafeSystem::IsTitlePaused())
+		return;
+	CafeSystem::PauseTitle();
+	m_autoPaused = true;
+	if (m_pauseMenuItem)
+		m_pauseMenuItem->Check(true);
+}
+
+void MainWindow::OnAppActivate(wxActivateEvent& event)
+{
+	if (!event.GetActive())
+		PauseForFocusLoss();
+	else if (m_autoPaused && !IsIconized())
+		SetEmulationPaused(false);
+	event.Skip();
+}
+
+void MainWindow::OnIconize(wxIconizeEvent& event)
+{
+	if (event.IsIconized())
+		PauseForFocusLoss();
+	else if (m_autoPaused && wxTheApp->IsActive())
+		SetEmulationPaused(false);
+	event.Skip();
+}
+
+#ifdef wxHAS_POWER_EVENTS
+// Going to sleep: stays paused afterwards, resume it from the menu (or the Game Menu)
+void MainWindow::OnPowerSuspending(wxPowerEvent& event)
+{
+	if (GetWxGUIConfig().pause_on_focus_loss && m_game_launched && CafeSystem::IsTitleRunning())
+		SetEmulationPaused(true);
+	event.Skip();
+}
+#endif
 
 // Game Mode can be fullscreen before a game starts, which SetFullScreen does not allow.
 void MainWindow::ApplyGameModeFullscreen(bool fullscreen)
@@ -1975,6 +2060,7 @@ void MainWindow::EndEmulation() // unfinished - memory leaks and crashes after r
 	DestroyCanvas();
 	LatteRenderTarget_setScreenLayoutOverride(-1); // the next game applies its own
 	m_game_launched = false;
+	m_autoPaused = false;
 	m_launched_game_name.clear();
 	#ifdef ENABLE_DISCORD_RPC
 	if (m_discord)
@@ -2355,6 +2441,7 @@ void MainWindow::RecreateMenu()
 
 	auto& guiConfig = GetWxGUIConfig();
 
+	m_pauseMenuItem = nullptr; // only exists while a game runs
 	m_menuBar = new wxMenuBar();
 	// file submenu
 	m_fileMenu = new wxMenu();
@@ -2391,6 +2478,9 @@ void MainWindow::RecreateMenu()
 	}
 	else
 	{
+		m_pauseMenuItem = m_fileMenu->AppendCheckItem(MAINFRAME_MENU_ID_FILE_PAUSE_EMULATION, _("&Pause emulation"));
+		m_pauseMenuItem->Check(CafeSystem::IsTitlePaused());
+		m_fileMenu->AppendSeparator();
 #ifdef CEMU_DEBUG_ASSERT
 		m_fileMenu->Append(MAINFRAME_MENU_ID_FILE_END_EMULATION, _("Close game"));
 		m_fileMenuSeparator1 = m_fileMenu->AppendSeparator();
@@ -2454,6 +2544,7 @@ void MainWindow::RecreateMenu()
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_GRAPHIC_PACKS2, _("&Graphic packs"));
 	m_padViewMenuItem = optionsMenu->AppendCheckItem(MAINFRAME_MENU_ID_OPTIONS_SECOND_WINDOW_PADVIEW, _("&Separate GamePad view"));
 	m_padViewMenuItem->Check(wxConfig.pad_open);
+	optionsMenu->AppendCheckItem(MAINFRAME_MENU_ID_OPTIONS_PAUSE_ON_FOCUS_LOSS, _("Pause on &focus loss / standby"))->Check(wxConfig.pause_on_focus_loss);
 	optionsMenu->AppendSeparator();
 	#if BOOST_OS_MACOS
 	optionsMenu->Append(MAINFRAME_MENU_ID_OPTIONS_MAC_SETTINGS, _("&Settings..." "\tCtrl-,"));

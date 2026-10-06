@@ -31,6 +31,7 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 	fullscreen_menubar = parser.get("fullscreen_menubar", false);
 	game_mode = parser.get("game_mode", false);
 	game_mode_boot = parser.get("game_mode_boot", false);
+	pause_on_focus_loss = parser.get("pause_on_focus_loss", false);
 	game_mode_buttons = parser.get("game_mode_buttons", 0);
 	game_mode_swap_ab = parser.get("game_mode_swap_ab", false);
 	game_mode_boot_video = parser.get("game_mode_boot_video", true);
@@ -182,6 +183,7 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 	config.set<bool>("fullscreen_menubar", fullscreen_menubar);
 	config.set<bool>("game_mode", game_mode);
 	config.set<bool>("game_mode_boot", game_mode_boot);
+	config.set<bool>("pause_on_focus_loss", pause_on_focus_loss);
 	config.set<sint32>("game_mode_buttons", game_mode_buttons);
 	config.set<bool>("game_mode_swap_ab", game_mode_swap_ab);
 	config.set<bool>("game_mode_boot_video", game_mode_boot_video);
