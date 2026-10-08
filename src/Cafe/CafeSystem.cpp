@@ -923,6 +923,7 @@ namespace CafeSystem
 			return;
 		sTitlePaused = true;
 		coreinit::SuspendActiveThreads();
+		PPCTimer_setPaused(true); // the console clock stops too, so in-game timers do not run on
 		// stop the audio streams so the device can idle; they restart by themselves once the
 		// game produces sound again
 		snd_core::AXOut_updateDevicePlayState(false);
@@ -935,6 +936,7 @@ namespace CafeSystem
 		if (!sSystemRunning || !sTitlePaused)
 			return;
 		sTitlePaused = false;
+		PPCTimer_setPaused(false);
 		coreinit::ResumeActiveThreads();
 		cemuLog_log(LogType::Force, "Emulation resumed");
 	}
