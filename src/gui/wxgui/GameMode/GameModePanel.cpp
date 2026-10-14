@@ -1099,7 +1099,7 @@ std::vector<GameModePanel::Key> GameModePanel::TextKeys() const
 		keys.push_back(key);
 	};
 	special(KeyAction::Shift, m_dialog.keyLayer == kUpper ? _("abc") : _("ABC"), 4, 0, 1.5);
-	special(KeyAction::Symbols, m_dialog.keyLayer == kSymbols ? _("ABC") : "#+=", 4, 1.5, 1.5);
+	special(KeyAction::Symbols, m_dialog.keyLayer == kSymbols ? _("ABC") : wxString("#+="), 4, 1.5, 1.5);
 	if (m_dialog.multiline)
 	{
 		special(KeyAction::Space, _("Space"), 4, 3, 3.5);
