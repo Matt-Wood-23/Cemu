@@ -77,6 +77,8 @@ public:
 	bool is_mapping_down(uint64 mapping) const;
 	std::string get_mapping_name(uint64 mapping) const;
 	std::shared_ptr<ControllerBase> get_mapping_controller(uint64 mapping) const;
+	// api button id a mapping is bound to, if any
+	std::optional<uint64> get_mapping_button(uint64 mapping) const;
 	void delete_mapping(uint64 mapping);
 	void clear_mappings();
 	void set_mapping(uint64 mapping, const std::shared_ptr<ControllerBase>& controller_base, uint64 button);

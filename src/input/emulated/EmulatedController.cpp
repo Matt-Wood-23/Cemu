@@ -288,6 +288,15 @@ bool EmulatedController::is_mapping_down(uint64 mapping) const
 }
 
 
+std::optional<uint64> EmulatedController::get_mapping_button(uint64 mapping) const
+{
+	std::shared_lock lock(m_mutex);
+	const auto it = m_mappings.find(mapping);
+	if (it == m_mappings.cend() || it->second.controller.expired())
+		return std::nullopt;
+	return it->second.button;
+}
+
 std::string EmulatedController::get_mapping_name(uint64 mapping) const
 {
 	std::shared_lock lock(m_mutex);

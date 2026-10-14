@@ -4,6 +4,11 @@ add_library(CemuCafe
   Account/Account.h
   CafeSystem.cpp
   CafeSystem.h
+  Cheats/CheatFile.cpp
+  Cheats/CheatManager.cpp
+  Cheats/CheatManager.h
+  Cheats/GatewayCheat.cpp
+  Cheats/GatewayCheat.h
   Filesystem/fsc.cpp
   Filesystem/fscDeviceHostFS.cpp
   Filesystem/fscDeviceHostFS.h
@@ -137,6 +142,8 @@ add_library(CemuCafe
   HW/Latte/Core/LatteTextureLegacy.cpp
   HW/Latte/Core/LatteTextureLoader.cpp
   HW/Latte/Core/LatteTextureLoader.h
+  HW/Latte/Core/LatteTextureReplace.cpp
+  HW/Latte/Core/LatteTextureReplace.h
   HW/Latte/Core/LatteTextureReadback.cpp
   HW/Latte/Core/LatteTextureReadbackInfo.h
   HW/Latte/Core/LatteTextureView.cpp

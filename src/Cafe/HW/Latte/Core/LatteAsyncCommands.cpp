@@ -49,6 +49,7 @@ typedef struct
 #define ASYNC_CMD_FORCE_TEXTURE_READBACK		1
 #define ASYNC_CMD_DELETE_SHADER					2
 #define ASYNC_CMD_TEXTURE_COPY					3
+#define ASYNC_CMD_RELOAD_TEXTURES				4
 
 std::queue<LatteAsyncCommand_t> LatteAsyncCommandQueue;
 
@@ -105,6 +106,16 @@ void LatteAsyncCommand_queueTextureCopy(const LatteSurfaceCopyParam& src, const 
 	swl_gpuAsyncCommands.UnlockWrite();
 }
 
+void LatteAsyncCommands_queueReloadTextures()
+{
+	LatteAsyncCommand_t asyncCommand = {};
+	asyncCommand.type = ASYNC_CMD_RELOAD_TEXTURES;
+
+	swl_gpuAsyncCommands.LockWrite();
+	LatteAsyncCommandQueue.push(asyncCommand);
+	swl_gpuAsyncCommands.UnlockWrite();
+}
+
 void LatteAsyncCommands_waitUntilAllProcessed()
 {
 	while (LatteAsyncCommandQueue.empty() == false)
@@ -121,6 +132,9 @@ void LatteAsyncCommands_checkAndExecute()
 	// quick check if queue is empty (requires no lock)
 	if (Latte_GetStopSignal())
 		LatteThread_Exit();
+	// [texture replacement] rebuild textures whose replacement no longer fits (reused for other data).
+	// Cheap when nothing is flagged; no full flush -> no screen blink
+	LatteTexture_RecheckReplacements();
 	if (LatteAsyncCommandQueue.empty())
 		return;
 	swl_gpuAsyncCommands.LockWrite();
@@ -153,6 +167,10 @@ void LatteAsyncCommands_checkAndExecute()
 		else if (asyncCommand.type == ASYNC_CMD_TEXTURE_COPY)
 		{
 			LatteSurfaceCopy_copySurfaceNew(asyncCommand.textureCopy.src, asyncCommand.textureCopy.dst, asyncCommand.textureCopy.rect);
+		}
+		else if (asyncCommand.type == ASYNC_CMD_RELOAD_TEXTURES)
+		{
+			LatteTC_UnloadAllTextures();
 		}
 		else
 		{

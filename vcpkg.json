@@ -67,7 +67,17 @@
         "zip"
       ]
     },
-    "libusb"
+    "libusb",
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avformat",
+        "swresample",
+        "swscale"
+      ]
+    }
   ],
   "overrides": [
     {

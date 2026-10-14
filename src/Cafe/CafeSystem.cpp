@@ -12,6 +12,7 @@
 #include "config/LaunchSettings.h"
 #include "Cafe/TitleList/GameInfo.h"
 #include "Cafe/GraphicPack/GraphicPack2.h"
+#include "Cafe/Cheats/CheatManager.h"
 #include "util/helpers/SystemException.h"
 #include "Common/cpu_features.h"
 #include "input/InputManager.h"
@@ -419,6 +420,8 @@ void cemu_initForGame()
 	// load graphic packs
 	cemuLog_log(LogType::Force, "------- Activate graphic packs -------");
 	GraphicPack2::ActivateForCurrentTitle();
+	// load cheats (after graphic packs, so a cheat can overwrite a patched location)
+	CheatManager::OnTitleStart(CafeSystem::GetForegroundTitleId());
 	// print audio log
 	IAudioAPI::PrintLogging();
 	IAudioInputAPI::PrintLogging();
@@ -445,6 +448,8 @@ namespace CafeSystem
 	std::optional<sint32> s_foregroundReturnStatus;
 
 	bool sSystemRunning = false;
+	std::atomic_bool sTitlePaused = false;
+	std::mutex sPauseMutex;
 	TitleId sForegroundTitleId = 0;
 
 	GameInfo2 sGameInfo_ForegroundTitle;
@@ -930,6 +935,36 @@ namespace CafeSystem
 		return sSystemRunning;
 	}
 
+	void PauseTitle()
+	{
+		std::lock_guard lock(sPauseMutex);
+		if (!sSystemRunning || sTitlePaused)
+			return;
+		sTitlePaused = true;
+		coreinit::SuspendActiveThreads();
+		PPCTimer_setPaused(true); // the console clock stops too, so in-game timers do not run on
+		// stop the audio streams so the device can idle; they restart by themselves once the
+		// game produces sound again
+		snd_core::AXOut_updateDevicePlayState(false);
+		cemuLog_log(LogType::Force, "Emulation paused");
+	}
+
+	void ResumeTitle()
+	{
+		std::lock_guard lock(sPauseMutex);
+		if (!sSystemRunning || !sTitlePaused)
+			return;
+		sTitlePaused = false;
+		PPCTimer_setPaused(false);
+		coreinit::ResumeActiveThreads();
+		cemuLog_log(LogType::Force, "Emulation resumed");
+	}
+
+	bool IsTitlePaused()
+	{
+		return sTitlePaused;
+	}
+
 	TitleId GetForegroundTitleId()
 	{
 		cemu_assert_debug(sForegroundTitleId != 0);
@@ -1066,6 +1101,8 @@ namespace CafeSystem
 	{
 		if(!sSystemRunning)
 			return;
+		ResumeTitle(); // shut down from a running state
+		CheatManager::OnTitleStop();
 		coreinit::OSSchedulerEnd();
 		Latte_Stop();
 		// reset Cafe OS userspace modules

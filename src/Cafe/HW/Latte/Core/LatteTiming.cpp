@@ -6,6 +6,7 @@
 #include "util/highresolutiontimer/HighResolutionTimer.h"
 #include "config/CemuConfig.h"
 #include "Cafe/CafeSystem.h"
+#include "Cafe/Cheats/CheatManager.h"
 
 sint32 s_customVsyncFrequency = -1;
 
@@ -81,6 +82,9 @@ void LatteTiming_signalVsync()
 
 	if (!LatteGPUState.gx2InitCalled)
 		return;
+	// no vsyncs while paused: the game must not count frames it never ran
+	if (CafeSystem::IsTitlePaused())
+		return;
 	s_vsyncIntervalCounter++;
 	uint32 swapInterval = 1;
 	if (LatteGPUState.sharedArea)
@@ -120,6 +124,8 @@ void LatteTiming_signalVsync()
 		GX2::__GX2NotifyEvent(GX2::GX2CallbackEventType::FLIP);
 		s_vsyncIntervalCounter = 0;
 	}
+	// cheats run once per vsync, before the game is woken for the new frame
+	CheatManager::RunFrame();
 	// vsync
 	GX2::__GX2NotifyEvent(GX2::GX2CallbackEventType::VSYNC);
 }

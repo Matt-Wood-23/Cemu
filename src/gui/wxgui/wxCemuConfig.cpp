@@ -29,6 +29,12 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 	msw_theme = parser.get<sint32>("msw_theme", msw_theme);
 	use_discord_presence = parser.get("use_discord_presence", true);
 	fullscreen_menubar = parser.get("fullscreen_menubar", false);
+	game_mode = parser.get("game_mode", false);
+	game_mode_boot = parser.get("game_mode_boot", false);
+	pause_on_focus_loss = parser.get("pause_on_focus_loss", false);
+	game_mode_buttons = parser.get("game_mode_buttons", 0);
+	game_mode_swap_ab = parser.get("game_mode_swap_ab", false);
+	game_mode_boot_video = parser.get("game_mode_boot_video", true);
 	feral_gamemode = parser.get("feral_gamemode", false);
 	check_update = parser.get("check_update", check_update);
 	receive_untested_updates = parser.get("receive_untested_updates", receive_untested_updates);
@@ -107,6 +113,50 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 		}
 	}
 
+	// custom textures: flat "<titleId>|<key>|<value>" entries, since '|' can't appear in a
+	// Windows folder name and the XML helper only stores plain string values
+	custom_textures.clear();
+	auto texture_parser = parser.get("CustomTextures");
+	for (auto element = texture_parser.get("Entry"); element.valid(); element = texture_parser.get("Entry", element))
+	{
+		const std::string entry = element.value("");
+		const size_t sep1 = entry.find('|');
+		if (sep1 == std::string::npos)
+			continue;
+		const size_t sep2 = entry.find('|', sep1 + 1);
+		if (sep2 == std::string::npos)
+			continue;
+		uint64 titleId = 0;
+		try { titleId = std::stoull(entry.substr(0, sep1), nullptr, 16); }
+		catch (const std::exception&) { continue; }
+		const std::string key = entry.substr(sep1 + 1, sep2 - sep1 - 1);
+		const std::string value = entry.substr(sep2 + 1);
+		auto& settings = custom_textures[titleId];
+		if (key == "enabled")
+			settings.enabled = (value != "0");
+		else if (key == "pack" && !value.empty())
+			settings.packs.emplace_back(value);
+	}
+
+	screen_layouts.clear();
+	auto layouts_parser = parser.get("ScreenLayouts");
+	for (auto element = layouts_parser.get("Entry"); element.valid(); element = layouts_parser.get("Entry", element))
+	{
+		// <titleId hex>|<layout>
+		const std::string entry = element.value("");
+		const size_t sep = entry.find('|');
+		if (sep == std::string::npos)
+			continue;
+		try
+		{
+			const uint64 titleId = std::stoull(entry.substr(0, sep), nullptr, 16);
+			const sint32 layout = std::stoi(entry.substr(sep + 1));
+			if (layout >= 0 && layout < kFullscreenScalingCount)
+				screen_layouts[titleId] = layout;
+		}
+		catch (const std::exception&) {}
+	}
+
 	// hotkeys
 	auto xml_hotkeys = parser.get("Hotkeys");
 	hotkeys.modifiers = xml_hotkeys.get("modifiers", sHotkeyCfg{});
@@ -114,8 +164,11 @@ void wxCemuConfig::Load(XMLConfigParser& parser)
 	hotkeys.toggleFullscreen = xml_hotkeys.get("ToggleFullscreen", sHotkeyCfg{uKeyboardHotkey{WXK_F11}});
 	hotkeys.toggleFullscreenAlt = xml_hotkeys.get("ToggleFullscreenAlt", sHotkeyCfg{uKeyboardHotkey{WXK_CONTROL_M, true}}); // ALT+ENTER
 	hotkeys.takeScreenshot = xml_hotkeys.get("TakeScreenshot", sHotkeyCfg{uKeyboardHotkey{WXK_F12}});
+	hotkeys.reloadTextures = xml_hotkeys.get("ReloadTextures", sHotkeyCfg{uKeyboardHotkey{WXK_F6}});
 	hotkeys.toggleFastForward = xml_hotkeys.get("ToggleFastForward", sHotkeyCfg{});
 	hotkeys.exitApplication = xml_hotkeys.get("ExitApplication", sHotkeyCfg{});
+	// Guide button (SDL gamepad button 5) and F10
+	hotkeys.gameMenu = xml_hotkeys.get("GameMenu", sHotkeyCfg{uKeyboardHotkey{WXK_F10}, 5});
 #ifdef CEMU_DEBUG_ASSERT
 	hotkeys.endEmulation = xml_hotkeys.get("EndEmulation", sHotkeyCfg{uKeyboardHotkey{WXK_F5}});
 #endif
@@ -128,6 +181,12 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 	config.set<sint32>("msw_theme", msw_theme);
 	config.set<bool>("use_discord_presence", use_discord_presence);
 	config.set<bool>("fullscreen_menubar", fullscreen_menubar);
+	config.set<bool>("game_mode", game_mode);
+	config.set<bool>("game_mode_boot", game_mode_boot);
+	config.set<bool>("pause_on_focus_loss", pause_on_focus_loss);
+	config.set<sint32>("game_mode_buttons", game_mode_buttons);
+	config.set<bool>("game_mode_swap_ab", game_mode_swap_ab);
+	config.set<bool>("game_mode_boot_video", game_mode_boot_video);
 	config.set<bool>("feral_gamemode", feral_gamemode);
 	config.set<bool>("check_update", check_update);
 	config.set<bool>("receive_untested_updates", receive_untested_updates);
@@ -178,6 +237,28 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 		nfc_files_parser.set("Entry", entry.c_str());
 	}
 
+	auto textures_parser = config.set("CustomTextures");
+	for (const auto& [titleId, settings] : custom_textures)
+	{
+		char prefix[24];
+		snprintf(prefix, sizeof(prefix), "%016llx", (unsigned long long)titleId);
+		const std::string enabledEntry = std::string(prefix) + "|enabled|" + (settings.enabled ? "1" : "0");
+		textures_parser.set("Entry", enabledEntry.c_str());
+		for (const auto& pack : settings.packs)
+		{
+			const std::string packEntry = std::string(prefix) + "|pack|" + pack;
+			textures_parser.set("Entry", packEntry.c_str());
+		}
+	}
+
+	auto layouts_parser = config.set("ScreenLayouts");
+	for (const auto& [titleId, layout] : screen_layouts)
+	{
+		char entry[48];
+		snprintf(entry, sizeof(entry), "%016llx|%d", (unsigned long long)titleId, layout);
+		layouts_parser.set("Entry", entry);
+	}
+
 	// hotkeys
 	auto xml_hotkeys = config.set("Hotkeys");
 	xml_hotkeys.set("modifiers", hotkeys.modifiers);
@@ -185,6 +266,8 @@ void wxCemuConfig::Save(XMLConfigParser& config)
 	xml_hotkeys.set("ToggleFullscreen", hotkeys.toggleFullscreen);
 	xml_hotkeys.set("ToggleFullscreenAlt", hotkeys.toggleFullscreenAlt);
 	xml_hotkeys.set("TakeScreenshot", hotkeys.takeScreenshot);
+	xml_hotkeys.set("ReloadTextures", hotkeys.reloadTextures);
 	xml_hotkeys.set("ToggleFastForward", hotkeys.toggleFastForward);
 	xml_hotkeys.set("ExitApplication", hotkeys.exitApplication);
+	xml_hotkeys.set("GameMenu", hotkeys.gameMenu);
 }

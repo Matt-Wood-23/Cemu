@@ -4,8 +4,12 @@ add_library(CemuWxGui STATIC
   CemuApp.h
   CemuUpdateWindow.cpp
   CemuUpdateWindow.h
+  CheatsWindow.cpp
+  CheatsWindow.h
   ChecksumTool.cpp
   ChecksumTool.h
+  CustomTexturesWindow.cpp
+  CustomTexturesWindow.h
   components/TextList.cpp
   components/TextList.h
   components/wxDownloadManagerList.cpp
@@ -48,6 +52,18 @@ add_library(CemuWxGui STATIC
   DownloadGraphicPacksWindow.h
   DownloadCustomGraphicPackWindow.cpp
   DownloadCustomGraphicPackWindow.h
+  GameMode/BootVideo.cpp
+  GameMode/BootVideo.h
+  GameMode/GameMenuOverlay.cpp
+  GameMode/GameModeFont.cpp
+  GameMode/GameModeFont.h
+  GameMode/GameMode.cpp
+  GameMode/GameMode.h
+  GameMode/GameModeBackend.h
+  GameMode/GameModeBackendCemu.cpp
+  GameMode/GameModeBackendCemu.h
+  GameMode/GameModePanel.cpp
+  GameMode/GameModePanel.h
   GameProfileWindow.cpp
   GameProfileWindow.h
   GameUpdateWindow.cpp
@@ -159,6 +175,7 @@ target_link_libraries(CemuWxGui PRIVATE
   CemuComponents
   pugixml::pugixml
   CemuCafe
+  imguiImpl # Game Mode's in-game menu is drawn with ImGui
   PUBLIC
   CURL::libcurl
 )
@@ -178,6 +195,36 @@ endif()
 if(ENABLE_SDL)
 	target_link_libraries(CemuWxGui PRIVATE SDL3::SDL3)
 endif()
+
+if(TARGET CemuFFmpeg)
+	target_link_libraries(CemuWxGui PRIVATE CemuFFmpeg)
+	target_compile_definitions(CemuWxGui PRIVATE CEMU_BOOT_VIDEO)
+	# the default boot video is built into Cemu; boot/boot.mp4 or boot/boot.webm in the Cemu folder replaces it
+	set(BOOT_VIDEO_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/GameMode/resources/boot.mp4")
+	set(BOOT_VIDEO_CPP "${CMAKE_CURRENT_BINARY_DIR}/BuiltInBootVideo.cpp")
+	add_custom_command(
+		OUTPUT "${BOOT_VIDEO_CPP}"
+		COMMAND ${CMAKE_COMMAND} -DINPUT=${BOOT_VIDEO_SOURCE} -DOUTPUT=${BOOT_VIDEO_CPP}
+			-DNAMESPACE=GameMode -DSYMBOL=BuiltInBootVideo -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+		DEPENDS "${BOOT_VIDEO_SOURCE}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+		COMMENT "Embedding the Game Mode boot video"
+		VERBATIM)
+	target_sources(CemuWxGui PRIVATE "${BOOT_VIDEO_CPP}")
+	set_source_files_properties("${BOOT_VIDEO_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+endif()
+
+# the Cemu logo (launcher home screen and the top of the in-game menu)
+set(LOGO_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/GameMode/resources/logo.png")
+set(LOGO_CPP "${CMAKE_CURRENT_BINARY_DIR}/Logo.cpp")
+add_custom_command(
+	OUTPUT "${LOGO_CPP}"
+	COMMAND ${CMAKE_COMMAND} -DINPUT=${LOGO_SOURCE} -DOUTPUT=${LOGO_CPP}
+		-DNAMESPACE=GameMode -DSYMBOL=Logo -P "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+	DEPENDS "${LOGO_SOURCE}" "${CMAKE_SOURCE_DIR}/cmake/EmbedFile.cmake"
+	COMMENT "Embedding the Game Mode logo"
+	VERBATIM)
+target_sources(CemuWxGui PRIVATE "${LOGO_CPP}")
+set_source_files_properties("${LOGO_CPP}" PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 if(UNIX AND NOT APPLE)
 	if(ENABLE_FERAL_GAMEMODE)

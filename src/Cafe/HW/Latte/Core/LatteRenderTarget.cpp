@@ -9,6 +9,7 @@
 #include "Cafe/HW/Latte/Core/LatteCachedFBO.h"
 #include "Cafe/HW/Latte/Renderer/Renderer.h"
 #include "Cafe/HW/Latte/Core/LattePerformanceMonitor.h"
+#include <atomic>
 #include "Cafe/GraphicPack/GraphicPack2.h"
 #include "HW/Latte/Renderer/RendererCore.h"
 #include "config/ActiveSettings.h"
@@ -16,6 +17,7 @@
 #include "Cafe/OS/libs/erreula/erreula.h"
 #include "input/InputManager.h"
 #include "Cafe/OS/libs/swkbd/swkbd.h"
+#include "Cafe/CafeSystem.h"
 
 uint32 prevScissorX = 0;
 uint32 prevScissorY = 0;
@@ -834,31 +836,105 @@ void LatteRenderTarget_itHLEClearColorDepthStencil(uint32 clearMask,
 sint32 _currentOutputImageWidth = 0;
 sint32 _currentOutputImageHeight = 0;
 
+static std::atomic<sint32> s_screenLayoutOverride{-1};
+
+void LatteRenderTarget_setScreenLayoutOverride(sint32 layout)
+{
+	if (layout < 0 || layout >= kFullscreenScalingCount)
+		layout = -1;
+	s_screenLayoutOverride.store(layout);
+}
+
+sint32 LatteRenderTarget_getScreenLayoutOverride()
+{
+	return s_screenLayoutOverride.load();
+}
+
+// Largest w x h box with aspect ratio num:den that fits inside the screen.
+static void _fitAspect(sint64 screenW, sint64 screenH, sint64 num, sint64 den, sint32& outW, sint32& outH)
+{
+	num = std::max<sint64>(num, 1);
+	den = std::max<sint64>(den, 1);
+	sint64 w = screenW;
+	sint64 h = screenW * den / num;
+	if (h > screenH)
+	{
+		h = screenH;
+		w = screenH * num / den;
+	}
+	outW = (sint32)w;
+	outH = (sint32)h;
+}
+
 void LatteRenderTarget_getScreenImageArea(sint32* x, sint32* y, sint32* width, sint32* height, sint32* fullWidth, sint32* fullHeight, bool padView)
 {
 	int w, h;
-	if(padView && WindowSystem::IsPadWindowOpen())
+	const bool separatePadWindow = padView && WindowSystem::IsPadWindowOpen();
+	if(separatePadWindow)
 		WindowSystem::GetPadWindowPhysSize(w, h);
 	else
 		WindowSystem::GetWindowPhysSize(w, h);
 
+	sint32 layout = s_screenLayoutOverride.load();
+	if (layout < 0)
+		layout = GetConfig().fullscreen_scaling;
+	// The separate GamePad window is for touch. Cropping or distorting it would move or hide
+	// touch targets, so it only ever follows fit or stretch.
+	if (separatePadWindow && layout != kStretch)
+		layout = kKeepAspectRatio;
+
+	const sint64 srcW = std::max(_currentOutputImageWidth, 1);
+	const sint64 srcH = std::max(_currentOutputImageHeight, 1);
 	sint32 scaledOutputX;
 	sint32 scaledOutputY;
-	if (GetConfig().fullscreen_scaling == kKeepAspectRatio)
+	switch (layout)
 	{
-		// calculate maximum possible resolution with intact aspect ratio
-		scaledOutputX = w;
-		scaledOutputY = _currentOutputImageHeight * w / std::max(_currentOutputImageWidth, 1);
-		if (scaledOutputY > h)
-		{
-			scaledOutputX = _currentOutputImageWidth * h / std::max(_currentOutputImageHeight, 1);
-			scaledOutputY = h;
-		}
-	}
-	else
-	{
+	case kStretch:
 		scaledOutputX = w;
 		scaledOutputY = h;
+		break;
+	case kFill:
+	{
+		// cover the screen: scale by the larger factor, the overflow is clipped by the viewport
+		sint64 fw = w;
+		sint64 fh = srcH * w / srcW;
+		if (fh < h)
+		{
+			fh = h;
+			fw = srcW * h / srcH;
+		}
+		scaledOutputX = (sint32)fw;
+		scaledOutputY = (sint32)fh;
+		break;
+	}
+	case kAspect16x9:
+		_fitAspect(w, h, 16, 9, scaledOutputX, scaledOutputY);
+		break;
+	case kAspect16x10:
+		_fitAspect(w, h, 16, 10, scaledOutputX, scaledOutputY);
+		break;
+	case kAspect4x3:
+		_fitAspect(w, h, 4, 3, scaledOutputX, scaledOutputY);
+		break;
+	case kAspect21x9:
+		_fitAspect(w, h, 21, 9, scaledOutputX, scaledOutputY);
+		break;
+	case kIntegerScale:
+	{
+		const sint64 factor = std::min<sint64>(w / srcW, h / srcH);
+		if (factor >= 1)
+		{
+			scaledOutputX = (sint32)(srcW * factor);
+			scaledOutputY = (sint32)(srcH * factor);
+		}
+		else // image is larger than the screen (e.g. upscaled by a graphic pack): just fit it
+			_fitAspect(w, h, srcW, srcH, scaledOutputX, scaledOutputY);
+		break;
+	}
+	case kKeepAspectRatio:
+	default:
+		_fitAspect(w, h, srcW, srcH, scaledOutputX, scaledOutputY);
+		break;
 	}
 
 	*x = (w - scaledOutputX) / 2;
@@ -977,11 +1053,59 @@ void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPa
 	swkbd_render(!isPadView);
 	nn::erreula::render(!isPadView);
 	LatteOverlay_render(isPadView);
+	if (CafeSystem::IsTitlePaused())
+		LatteOverlay_renderPaused(isPadView);
+	WindowSystem::RenderGameMenu(!isPadView); // Game Mode's in-game menu, drawn above everything
 	g_renderer->ImguiEnd();
+}
+
+// The last copy to each scan buffer (TV, DRC), replayed while the title is paused so the picture
+// and the overlays keep being drawn. Replaying looks the texture up again by address, so nothing
+// is held that the texture cache could free in the meantime.
+namespace
+{
+	struct ScanBufferCopy
+	{
+		bool valid = false;
+		MPTR colorBufferPtr;
+		uint32 width, height, sliceIndex, format, pitch;
+		Latte::E_HWTILEMODE tilemode;
+		uint32 swizzle, renderTarget;
+	};
+	ScanBufferCopy s_lastScanBufferCopy[2]; // TV, DRC
+}
+
+void LatteRenderTarget_presentWhilePaused()
+{
+	static auto s_lastPresent = std::chrono::steady_clock::now();
+	const auto now = std::chrono::steady_clock::now();
+	if (now - s_lastPresent < std::chrono::milliseconds(33))
+		return;
+	s_lastPresent = now;
+	const ScanBufferCopy copies[2] = {s_lastScanBufferCopy[0], s_lastScanBufferCopy[1]};
+	if (!copies[0].valid && !copies[1].valid)
+		return;
+	for (int i = 0; i < 2; i++)
+	{
+		const ScanBufferCopy& c = copies[i];
+		if (!c.valid)
+			continue;
+		if (i == 1 && copies[0].valid && copies[0].renderTarget == c.renderTarget && copies[0].colorBufferPtr == c.colorBufferPtr)
+			continue; // one copy went to both
+		LatteRenderTarget_itHLECopyColorBufferToScanBuffer(c.colorBufferPtr, c.width, c.height, c.sliceIndex, c.format, c.pitch, c.tilemode, c.swizzle, c.renderTarget);
+	}
+	g_renderer->SwapBuffers(true, true);
 }
 
 void LatteRenderTarget_itHLECopyColorBufferToScanBuffer(MPTR colorBufferPtr, uint32 colorBufferWidth, uint32 colorBufferHeight, uint32 colorBufferSliceIndex, uint32 colorBufferFormat, uint32 colorBufferPitch, Latte::E_HWTILEMODE colorBufferTilemode, uint32 colorBufferSwizzle, uint32 renderTarget)
 {
+	{
+		const ScanBufferCopy copy{true, colorBufferPtr, colorBufferWidth, colorBufferHeight, colorBufferSliceIndex, colorBufferFormat, colorBufferPitch, colorBufferTilemode, colorBufferSwizzle, renderTarget};
+		if (renderTarget & RENDER_TARGET_TV)
+			s_lastScanBufferCopy[0] = copy;
+		if (renderTarget & RENDER_TARGET_DRC)
+			s_lastScanBufferCopy[1] = copy;
+	}
 	cemu_assert_debug(colorBufferSliceIndex == 0); // todo - support for non-zero slice
 	LatteTextureView* texView = LatteTC_GetTextureSliceViewOrTryCreate(colorBufferPtr, MPTR_NULL, (Latte::E_GX2SURFFMT)colorBufferFormat, colorBufferTilemode, colorBufferWidth, colorBufferHeight, 1, colorBufferPitch, colorBufferSwizzle, 0, 0, true);
 	if (!texView)

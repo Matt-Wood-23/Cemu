@@ -11,6 +11,8 @@
 #endif
 #include "input/InputManager.h"
 
+#include <unordered_set>
+
 // <imgui_internal.h>
 template<typename T> static T ImMin(T lhs, T rhs) { return lhs < rhs ? lhs : rhs; }
 template<typename T> static T ImMax(T lhs, T rhs) { return lhs >= rhs ? lhs : rhs; }
@@ -53,14 +55,21 @@ extern char const g_fontawesome_data[];
 #endif
 std::unordered_map<int, ImFont*> g_imgui_fonts;
 std::stack<int> g_font_requests;
+std::unordered_set<int> g_font_requests_pending; // sizes already in g_font_requests
 
 void ImGui_PrecacheFonts()
 {
+	bool built = false;
 	while (!g_font_requests.empty())
 	{
 		const int size = g_font_requests.top();
 		g_font_requests.pop();
-		
+		g_font_requests_pending.erase(size);
+		// a size can be asked for many times before it is built (once per text drawn in a frame):
+		// build it once, or the atlas fills up with copies and every copy stalls the renderer
+		if (g_imgui_fonts.find(size) != g_imgui_fonts.end())
+			continue;
+
 		auto& io = ImGui::GetIO();
 		cemu_assert(io.Fonts->Locked == false);
 
@@ -101,8 +110,12 @@ void ImGui_PrecacheFonts()
 #endif
 
 		g_imgui_fonts[(int)size] = font;
-
+		built = true;
+	}
+	if (built)
+	{
 		// Vulkan doesn't let us destroy resources that are still being used, so we flush here
+		// (once for all the sizes built this frame)
 		g_renderer->Flush(true);
 		g_renderer->DeleteFontTextures();
 	}
@@ -111,6 +124,8 @@ void ImGui_PrecacheFonts()
 void ImGui_ClearFonts()
 {
     g_imgui_fonts.clear();
+    g_font_requests = {};
+    g_font_requests_pending.clear();
 }
 
 ImFont* ImGui_GetFont(float size)
@@ -119,7 +134,8 @@ ImFont* ImGui_GetFont(float size)
 	if (it != g_imgui_fonts.cend())
 		return it->second;
 
-	g_font_requests.emplace((int)size);
+	if (g_font_requests_pending.insert((int)size).second)
+		g_font_requests.emplace((int)size);
 	return nullptr; // will create the font in next precache call
 }
 

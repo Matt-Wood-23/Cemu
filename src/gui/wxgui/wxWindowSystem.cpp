@@ -1,4 +1,5 @@
 #include "input/HotkeySettings.h"
+#include "wxgui/GameMode/GameMode.h"
 #include "interface/WindowSystem.h"
 
 #include "helpers/wxHelpers.h"
@@ -313,6 +314,16 @@ std::string WindowSystem::GetKeyCodeName(uint32 button)
 bool WindowSystem::InputConfigWindowHasFocus()
 {
 	return g_inputConfigWindowHasFocus;
+}
+
+bool WindowSystem::IsGameInputBlocked()
+{
+	return GameMode::IsGameInputBlocked();
+}
+
+void WindowSystem::RenderGameMenu(bool mainWindow)
+{
+	GameMode::RenderMenu(mainWindow);
 }
 
 void WindowSystem::NotifyGameLoaded()

@@ -13,8 +13,10 @@
 #include "wxgui/components/wxGameList.h"
 
 #include <future>
+#include <set>
 #include "Cafe/HW/Espresso/Debugger/GDBStub.h"
 #include "Cafe/CafeSystem.h"
+#include <wx/power.h> // wxHAS_POWER_EVENTS, wxPowerEvent
 
 class DebuggerWindow2;
 struct GameEntry;
@@ -77,6 +79,17 @@ public:
 	bool IsMenuHidden() const;
 	void TogglePadView();
 	void OpenPPCDebugger();
+
+	// Game Mode (View > Game Mode): the controller-first launcher replaces the game list and
+	// the menu bar is hidden. Leaving it is only offered from the launcher, i.e. with no game running.
+	bool IsGameModeEnabled() const;
+	void SetGameModeEnabled(bool enabled);
+	void ApplyGameModeFullscreen(bool fullscreen);
+
+	// Pause / resume the running game (File > Pause emulation, the Game Menu). UI thread.
+	void SetEmulationPaused(bool paused);
+	// Options > Pause on focus loss / standby (also in the Game Menu and Game Mode's settings)
+	void SetPauseOnFocusLoss(bool enabled);
 
 #if BOOST_OS_WINDOWS
 	WXLRESULT MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam) override;
@@ -160,6 +173,9 @@ public:
 private:
 	bool FullscreenEnabled() const;
 	void RecreateMenu();
+	void ApplyCustomTextureSettings();
+	void OnScreenLayoutMenu(wxCommandEvent& event);
+	void ApplyScreenLayoutForRunningTitle();
 	void UpdateChildWindowTitleRunningState();
 	static wxString GetInitialWindowTitle();
 
@@ -192,6 +208,17 @@ private:
 	bool m_menu_visible = false;
 	bool m_game_launched = false;
 
+	// pause on focus loss / standby
+	void OnAppActivate(wxActivateEvent& event);
+	void OnIconize(wxIconizeEvent& event);
+#ifdef wxHAS_POWER_EVENTS
+	void OnPowerSuspending(wxPowerEvent& event);
+#endif
+	void OnPauseMenu(wxCommandEvent& event);
+	void PauseForFocusLoss();
+	bool m_autoPaused = false; // paused because Cemu went to the background: resumes on return
+	wxMenuItem* m_pauseMenuItem = nullptr;
+
 	#ifdef ENABLE_DISCORD_RPC
 	std::unique_ptr<DiscordPresence> m_discord;
 	#endif
@@ -213,6 +240,8 @@ private:
 
 	// panels
 	wxPanel* m_main_panel{}, * m_game_panel{};
+	class GameModePanel* m_gameModePanel{};
+	std::set<int> m_gameMenuKeysDown; // keys pressed while the Game Menu was open (their key-up is swallowed)
 
 	// rendering
 	wxWindow* m_render_canvas{};
@@ -240,6 +269,7 @@ private:
 
 	// tools
 	wxMenuItem* m_memorySearcherMenuItem{};
+	wxMenuItem* m_cheatsMenuItem{};
 
 	// cpu
 	wxMenu* m_cpuTimerSubmenu{};

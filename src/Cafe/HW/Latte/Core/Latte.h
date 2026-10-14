@@ -101,12 +101,19 @@ void LatteRenderTarget_updateScissorBox();
 
 void LatteRenderTarget_trackUpdates();
 
+// Per-game screen layout (a FullscreenScaling value) that wins over the global setting until
+// cleared with -1. Not saved by the core; the front end re-applies it when the game starts.
+void LatteRenderTarget_setScreenLayoutOverride(sint32 layout);
+sint32 LatteRenderTarget_getScreenLayoutOverride();
 void LatteRenderTarget_getScreenImageArea(sint32* x, sint32* y, sint32* width, sint32* height, sint32* fullWidth, sint32* fullHeight, bool padView = false);
 void LatteRenderTarget_copyToBackbuffer(LatteTextureView* textureView, bool isPadView);
 
 void LatteRenderTarget_GetCurrentVirtualViewportSize(sint32* viewportWidth, sint32* viewportHeight);
 
 void LatteRenderTarget_itHLESwapScanBuffer();
+// While the title is paused: shows the last frame again (with the overlays and the Game Menu)
+// about 30 times a second. Called from the GPU thread's wait loops.
+void LatteRenderTarget_presentWhilePaused();
 void LatteRenderTarget_itHLEClearColorDepthStencil(uint32 clearMask, MPTR colorBufferMPTR, Latte::E_GX2SURFFMT colorBufferFormat, Latte::E_HWTILEMODE colorBufferTilemode, uint32 colorBufferWidth, uint32 colorBufferHeight, uint32 colorBufferPitch, uint32 colorBufferViewFirstSlice, uint32 colorBufferViewNumSlice, MPTR depthBufferMPTR, Latte::E_GX2SURFFMT depthBufferFormat, Latte::E_HWTILEMODE depthBufferTileMode, sint32 depthBufferWidth, sint32 depthBufferHeight, sint32 depthBufferPitch, sint32 depthBufferViewFirstSlice, sint32 depthBufferViewNumSlice, float r, float g, float b, float a, float clearDepth, uint32 clearStencil);
 void LatteRenderTarget_itHLECopyColorBufferToScanBuffer(MPTR colorBufferPtr, uint32 colorBufferWidth, uint32 colorBufferHeight, uint32 colorBufferSliceIndex, uint32 colorBufferFormat, uint32 colorBufferPitch, Latte::E_HWTILEMODE colorBufferTilemode, uint32 colorBufferSwizzle, uint32 renderTarget);
 
