@@ -12,12 +12,15 @@ public:
 	static void Init(class MainWindow* mainWindow);
 
 	static void CaptureInput(wxKeyEvent& event);
-	static void CaptureInput(const ControllerState& currentState, const ControllerState& lastState);
+	static void CaptureInput(const ControllerBase& controller, const ControllerState& currentState, const ControllerState& lastState);
 
 	// Game Menu binding, also changed from Game Mode's Input settings. Saves the config.
 	static void SetGameMenuKeyboardHotkey(uKeyboardHotkey hotkey);
 	static void SetGameMenuControllerHotkey(ControllerHotkey_t button);
 	static wxString KeyboardHotkeyLabel(uKeyboardHotkey hotkey);
+	// true if a plain press of this button on this controller opens the Game Menu; any other
+	// button has to be held, because the game may use it too
+	static bool IsGameMenuTapButton(const ControllerBase& controller, ControllerHotkey_t button);
 
 	HotkeySettings(wxWindow* parent);
 	~HotkeySettings();

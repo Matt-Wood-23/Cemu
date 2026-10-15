@@ -150,7 +150,8 @@ struct wxCemuConfig
 		sHotkeyCfg toggleFastForward;
 		sHotkeyCfg exitApplication;
 		// Opens the Game Menu over the running game. Unlike the other controller hotkeys it does
-		// not need the modifier button held, so a single Guide press works.
+		// not need the modifier button held, so a single Guide press works. Any other controller
+		// button has to be held (HotkeySettings::IsGameMenuTapButton).
 		sHotkeyCfg gameMenu;
 #ifdef CEMU_DEBUG_ASSERT
 		sHotkeyCfg endEmulation;

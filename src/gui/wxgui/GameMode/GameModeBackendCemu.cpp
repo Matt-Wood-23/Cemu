@@ -629,9 +629,14 @@ wxString GameModeBackendCemu::GetGameMenuBindingLabel()
 	if (binding.controller != sHotkeyCfg::controllerNone)
 	{
 		const auto controllers = AllControllers();
-		controllerText = controllers.empty()
-			? wxString::Format(_("Button %d"), (int)binding.controller)
-			: wxString::FromUTF8(controllers.front()->get_button_name(binding.controller));
+		if (controllers.empty())
+			controllerText = wxString::Format(_("Button %d"), (int)binding.controller);
+		else
+		{
+			controllerText = wxString::FromUTF8(controllers.front()->get_button_name(binding.controller));
+			if (!HotkeySettings::IsGameMenuTapButton(*controllers.front(), binding.controller))
+				controllerText = wxString::Format(_("Hold %s"), controllerText);
+		}
 	}
 	const wxString keyText = HotkeySettings::KeyboardHotkeyLabel(binding.keyboard);
 	if (controllerText.empty() && binding.keyboard.raw == sHotkeyCfg::keyboardNone)

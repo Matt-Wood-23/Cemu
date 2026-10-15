@@ -2,6 +2,8 @@
 
 #include "input/api/ControllerState.h"
 
+class ControllerBase;
+
 namespace WindowSystem
 {
 	struct WindowHandleInfo
@@ -127,5 +129,5 @@ namespace WindowSystem
 
 	bool IsFullScreen();
 
-	void CaptureInput(const ControllerState& currentState, const ControllerState& lastState);
+	void CaptureInput(const ControllerBase& controller, const ControllerState& currentState, const ControllerState& lastState);
 }; // namespace WindowSystem

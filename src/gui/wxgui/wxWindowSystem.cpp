@@ -352,9 +352,9 @@ void WindowSystem::RefreshGameList()
 	}
 }
 
-void WindowSystem::CaptureInput(const ControllerState& currentState, const ControllerState& lastState)
+void WindowSystem::CaptureInput(const ControllerBase& controller, const ControllerState& currentState, const ControllerState& lastState)
 {
-	HotkeySettings::CaptureInput(currentState, lastState);
+	HotkeySettings::CaptureInput(controller, currentState, lastState);
 }
 
 bool WindowSystem::IsFullScreen()

@@ -61,7 +61,7 @@ const ControllerState& ControllerBase::update_state()
 	kTriggerYN,
 	 */
 
-	WindowSystem::CaptureInput(result, m_last_state);
+	WindowSystem::CaptureInput(*this, result, m_last_state);
 
 	m_last_state = std::move(result);
 	return m_last_state;

@@ -11,6 +11,9 @@
 #include <wx/app.h>
 #include <wx/clipbrd.h>
 
+#include <chrono>
+#include <mutex>
+
 #if BOOST_OS_WINDOWS
 #include <ole2.h>
 #endif
@@ -161,7 +164,7 @@ HotkeySettings::HotkeySettings(wxWindow* parent)
 	CreateHotkeyRow(_tr("Take screenshot"), s_cfgHotkeys.takeScreenshot);
 	CreateHotkeyRow(_tr("Reload textures"), s_cfgHotkeys.reloadTextures);
 	CreateHotkeyRow(_tr("Toggle fast-forward"), s_cfgHotkeys.toggleFastForward);
-	CreateHotkeyRow(_tr("Game Menu (no modifier needed)"), s_cfgHotkeys.gameMenu);
+	CreateHotkeyRow(_tr("Game Menu (no modifier; hold the button, or press Guide)"), s_cfgHotkeys.gameMenu);
 #ifdef CEMU_DEBUG_ASSERT
 	CreateHotkeyRow(_tr("End emulation"), s_cfgHotkeys.endEmulation);
 #endif
@@ -552,14 +555,67 @@ void HotkeySettings::SetGameMenuControllerHotkey(ControllerHotkey_t button)
 	g_wxConfig.Save();
 }
 
-void HotkeySettings::CaptureInput(const ControllerState& currentState, const ControllerState& lastState)
+// The Game Menu button needs no modifier. Only Guide opens the menu on a plain press, since no Wii U
+// game sees it. Any other button may be one the game uses as well, so it has to be held: button
+// numbers belong to the controller API, and the default (SDL's Guide) is Back under XInput, where
+// MH3U players have their minus button. The game still gets the press; the menu opens over it.
+static constexpr ControllerHotkey_t kSDLGuideButton = 5; // SDL_GAMEPAD_BUTTON_GUIDE
+static constexpr auto kGameMenuHoldTime = std::chrono::milliseconds(800); // as Game Mode's hold-to-exit
+
+namespace
 {
-	// Game Menu: a plain press of its button, no modifier needed
-	const auto gameMenuButton = s_cfgHotkeys.gameMenu.controller;
-	if (gameMenuButton >= 0 && currentState.buttons.GetButtonState(gameMenuButton) && !lastState.buttons.GetButtonState(gameMenuButton))
+	std::mutex s_gameMenuHoldMutex; // controllers are updated from more than one thread
+	const ControllerBase* s_gameMenuHoldController = nullptr; // whose press is being timed; never dereferenced
+	std::chrono::steady_clock::time_point s_gameMenuHoldStart;
+
+	// true once, when the press that started on this controller has been held long enough
+	bool UpdateGameMenuHold(const ControllerBase& controller, bool down, bool pressed)
 	{
-		GameMode::ToggleMenu();
-		return;
+		std::scoped_lock lock(s_gameMenuHoldMutex);
+		const auto now = std::chrono::steady_clock::now();
+		if (pressed)
+		{
+			s_gameMenuHoldController = &controller;
+			s_gameMenuHoldStart = now;
+			return false;
+		}
+		if (s_gameMenuHoldController != &controller)
+			return false;
+		if (!down)
+		{
+			s_gameMenuHoldController = nullptr;
+			return false;
+		}
+		if (now - s_gameMenuHoldStart < kGameMenuHoldTime)
+			return false;
+		s_gameMenuHoldController = nullptr;
+		return true;
+	}
+}
+
+bool HotkeySettings::IsGameMenuTapButton(const ControllerBase& controller, ControllerHotkey_t button)
+{
+	return controller.api() == InputAPI::SDLController && button == kSDLGuideButton;
+}
+
+void HotkeySettings::CaptureInput(const ControllerBase& controller, const ControllerState& currentState, const ControllerState& lastState)
+{
+	const auto gameMenuButton = s_cfgHotkeys.gameMenu.controller;
+	if (gameMenuButton >= 0)
+	{
+		const bool down = currentState.buttons.GetButtonState(gameMenuButton);
+		const bool pressed = down && !lastState.buttons.GetButtonState(gameMenuButton);
+		// closing is always a plain press: the game gets no input while the menu is open
+		if (pressed && (GameMode::IsMenuOpen() || IsGameMenuTapButton(controller, gameMenuButton)))
+		{
+			GameMode::ToggleMenu();
+			return;
+		}
+		if (UpdateGameMenuHold(controller, down, pressed) && !GameMode::IsMenuOpen())
+		{
+			GameMode::SetMenuOpen(true);
+			return;
+		}
 	}
 
 	const auto& modifier = s_cfgHotkeys.modifiers.controller;
