@@ -826,7 +826,9 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 	if (textureLoader.dump)
 	{
 		fs::path path = ActiveSettings::GetUserDataPath("dump/textures");
-		if (LatteTextureReplace::IsEnabled())
+		// Keyed on the setting, not on IsEnabled(): that is only true once a pack file is indexed, so
+		// someone making their first pack got address-named dumps they could not use.
+		if (ActiveSettings::LoadCustomTexturesEnabled())
 		{
 			// name the dump with the hash the replacement loader matches on, so a dumped filename can
 			// be reused verbatim as the replacement filename. Always the current scheme: the lookup key
