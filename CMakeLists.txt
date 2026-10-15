@@ -150,6 +150,14 @@ option(ENABLE_CUBEB "Enabled cubeb backend" ON)
 option(ENABLE_WXWIDGETS "Build with wxWidgets UI (Currently required)" ON)
 option(ENABLE_BOOT_VIDEO "Game Mode boot video: built in, replaceable with boot/boot.mp4 or boot/boot.webm (needs FFmpeg)" ON)
 
+# FFmpeg makes vcpkg build its own pkgconf, and CMake would then find that one in vcpkg's tools.
+# It does not search the system's .pc directories on every host (arm64 Ubuntu), so system
+# packages such as GTK and wayland-protocols go missing. The system pkg-config still finds the
+# vcpkg packages, through the prefixes the vcpkg toolchain adds to CMAKE_PREFIX_PATH.
+if (UNIX AND NOT APPLE AND EXISTS /usr/bin/pkg-config)
+	set(PKG_CONFIG_EXECUTABLE /usr/bin/pkg-config CACHE FILEPATH "pkg-config executable")
+endif()
+
 find_package(Threads REQUIRED)
 find_package(CURL REQUIRED)
 find_package(pugixml REQUIRED)
