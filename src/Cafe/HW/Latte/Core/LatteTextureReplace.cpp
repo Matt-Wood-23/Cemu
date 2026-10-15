@@ -63,7 +63,9 @@ namespace LatteTextureReplace
 		return (uint32_t)((std::max(1,(w+3)/4))*(std::max(1,(h+3)/4))*bpb);
 	}
 
-	struct FileRef { fs::path path; int width=0, height=0; uint32_t gx2Format=0; bool probed=false; std::string pack; };
+	// width/height/gx2Format: the DDS itself, read on first use. name*: what the filename says about
+	// the game's own texture, which is what an older pack's name has to be checked against.
+	struct FileRef { fs::path path; int width=0, height=0; uint32_t gx2Format=0; bool probed=false; std::string pack; int nameW=0, nameH=0; uint32_t nameFmt=0; };
 	struct HashGroup { std::unordered_map<int,FileRef> mips; std::unordered_map<int,LatteTextureReplace_Entry> decoded; };
 	struct TitleSettings { bool enabled=true; std::vector<std::string> packs; };
 
@@ -90,10 +92,10 @@ namespace LatteTextureReplace
 		return e==".dds";
 	}
 
-	static bool parseName(const std::string& n,uint64_t& hash,int& w,int& h,int& mip){
+	static bool parseName(const std::string& n,uint64_t& hash,int& w,int& h,uint32_t& fmt,int& mip){
 		unsigned long long uHash=0; unsigned uFmt=0; int uW=0,uH=0,uMip=0;
 		if (sscanf(n.c_str(),"%llx_%dx%d_fmt%x_mip%d",&uHash,&uW,&uH,&uFmt,&uMip)!=5) return false;
-		hash=(uint64_t)uHash; w=uW; h=uH; mip=uMip; return true;
+		hash=(uint64_t)uHash; w=uW; h=uH; fmt=uFmt; mip=uMip; return true;
 	}
 	static void loadPackConfig(const fs::path& base){
 		std::ifstream f(base/"pack.json"); if(!f) return;
@@ -129,8 +131,8 @@ namespace LatteTextureReplace
 		size_t added=0; std::error_code ec;
 		auto handleFile=[&](const fs::path& p){
 			if(!isDDSFile(p)) return;
-			uint64_t hash; int w,h,mip;
-			if(!parseName(p.filename().string(),hash,w,h,mip)) return;
+			uint64_t hash; int w,h,mip; uint32_t fmt;
+			if(!parseName(p.filename().string(),hash,w,h,fmt,mip)) return;
 			if(s_skipMip && mip!=0) return;
 			HashGroup& grp=s_index[hash];
 			auto ex=grp.mips.find(mip);
@@ -142,7 +144,7 @@ namespace LatteTextureReplace
 				}
 				return; // first claim wins
 			}
-			grp.mips[mip]=FileRef{p,w,h,0,false,packName};
+			grp.mips[mip]=FileRef{p,w,h,0,false,packName,w,h,fmt};
 			added++;
 		};
 		if(recurse){ for(auto& e: fs::recursive_directory_iterator(dir,ec)) if(e.is_regular_file()) handleFile(e.path()); }
@@ -228,13 +230,10 @@ namespace LatteTextureReplace
 	// HashData's XOR accumulation also leaves the combined value with no avalanche, so near-identical
 	// inputs produce near-identical hashes. A splitmix64 finalizer fixes that.
 	//
-	// NOTE: this changes every hash value, so pack filenames generated before this commit no longer
-	// match. RecordRenameMapping below emits a rename map so an existing pack can be migrated.
-	uint64_t HashGuest(uint32_t physImagePtr, uint32_t sizeBytes, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt){
-		if(!s_enabled) { std::scoped_lock lock(s_mutex); EnsureInit(); if(!s_enabled) return 0; }
-		const uint8* p=(const uint8*)memory_getPointerFromPhysicalOffset(physImagePtr);
-		if(!p||!sizeBytes) return 0;
-		uint64_t h = HashData(p, sizeBytes);
+	// NOTE: this changes every hash value, so pack filenames generated before it are not the names
+	// this produces. Those packs still load (see HashGuest), and RecordRenameMapping below emits a
+	// rename map for moving one to the new names.
+	static uint64_t MixDiscriminators(uint64_t h, uint32_t sizeBytes, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt){
 		h ^= (uint64_t)pixelCount * 0x9E3779B97F4A7C15ULL;
 		h ^= ((uint64_t)(uint32_t)fmt + 0x165667B19E3779F9ULL) * 0xC2B2AE3D27D4EB4FULL;
 		h ^= (uint64_t)sizeBytes * 0xD6E8FEB86659FD93ULL;
@@ -242,6 +241,35 @@ namespace LatteTextureReplace
 		h ^= h >> 33; h *= 0xC4CEB9FE1A85EC53ULL;
 		h ^= h >> 33;
 		return h ? h : 1; // 0 is the "no hash" sentinel elsewhere
+	}
+
+	uint64_t HashGuestCurrent(uint32_t physImagePtr, uint32_t sizeBytes, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt){
+		const uint8* p=(const uint8*)memory_getPointerFromPhysicalOffset(physImagePtr);
+		if(!p||!sizeBytes) return 0;
+		return MixDiscriminators(HashData(p, sizeBytes), sizeBytes, pixelCount, fmt);
+	}
+
+	// Packs made before the discriminators were mixed in are named by the plain content hash. Their
+	// filenames still record the game texture's size and format, so such a name is accepted only for
+	// a texture whose pixel count and format agree with it, which is the protection the new scheme
+	// gives. A pack using the new names wins when both have the texture.
+	static bool matchesLegacyName(const HashGroup& grp, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt){
+		for(const auto& [mip,ref]: grp.mips)
+			if((uint64_t)ref.nameW*(uint64_t)ref.nameH==pixelCount && ref.nameFmt==(uint32_t)fmt) return true;
+		return false;
+	}
+
+	uint64_t HashGuest(uint32_t physImagePtr, uint32_t sizeBytes, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt){
+		if(!s_enabled) { std::scoped_lock lock(s_mutex); EnsureInit(); if(!s_enabled) return 0; }
+		const uint8* p=(const uint8*)memory_getPointerFromPhysicalOffset(physImagePtr);
+		if(!p||!sizeBytes) return 0;
+		const uint64_t raw = HashData(p, sizeBytes);
+		const uint64_t current = MixDiscriminators(raw, sizeBytes, pixelCount, fmt);
+		std::scoped_lock lock(s_mutex); EnsureInit();
+		if(raw==0 || s_index.count(current)) return current;
+		auto it=s_index.find(raw);
+		if(it!=s_index.end() && matchesLegacyName(it->second, pixelCount, fmt)) return raw;
+		return current;
 	}
 
 	uint64_t HashGuestRaw(uint32_t physImagePtr, uint32_t sizeBytes){
@@ -359,8 +387,8 @@ namespace LatteTextureReplace
 			for(auto& e: fs::recursive_directory_iterator(packDir,ec)){
 				if(!e.is_regular_file()) continue;
 				if(!isDDSFile(e.path())) continue;
-				uint64_t hash; int w,h,mip;
-				if(!parseName(e.path().filename().string(),hash,w,h,mip)) continue;
+				uint64_t hash; int w,h,mip; uint32_t fmt;
+				if(!parseName(e.path().filename().string(),hash,w,h,fmt,mip)) continue;
 				auto& v=owners[{hash,mip}];
 				if(std::find(v.begin(),v.end(),p)==v.end()) v.push_back(p);
 			}

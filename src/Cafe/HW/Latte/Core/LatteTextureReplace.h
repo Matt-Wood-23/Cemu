@@ -42,7 +42,11 @@ namespace LatteTextureReplace
 	struct ReplacementInfo { int width=0, height=0; bool hasFormat=false; uint32_t gx2Format=0; };
 	bool GetInfo(uint64_t contentHash, ReplacementInfo& out);
 	// full-data hash over the guest mip0 surface; stable and unique per distinct texture
+	// Lookup key for a guest surface: the hash packs are named by, or the older plain content hash
+	// when only a pack made before the current scheme has this texture. 0 while replacement is off.
 	uint64_t HashGuest(uint32_t physImagePtr, uint32_t sizeBytes, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt);
+	// The current-scheme hash alone, which is what dumps and new packs are named by
+	uint64_t HashGuestCurrent(uint32_t physImagePtr, uint32_t sizeBytes, uint32_t pixelCount, Latte::E_GX2SURFFMT fmt);
 	uint64_t HashGuestRaw(uint32_t physImagePtr, uint32_t sizeBytes); // always computes (used for dump naming)
 
 	// ---- texture packs (per title) ----

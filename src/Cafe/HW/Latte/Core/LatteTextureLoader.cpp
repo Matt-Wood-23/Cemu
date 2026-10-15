@@ -674,9 +674,11 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		// both are constant across a surface's mip levels.
 		if (ActiveSettings::DumpTexturesEnabled())
 		{
+			// replStrongHash is the legacy hash itself when an older pack matched, so take the new one fresh
 			tex->replLegacyHash = LatteTextureReplace::HashGuestRaw(physImagePtr, (uint32)textureLoader.maxOffsetOutdated);
+			const uint64 currentHash = LatteTextureReplace::HashGuestCurrent(physImagePtr, (uint32)textureLoader.maxOffsetOutdated, tex->width * tex->height, format);
 			for (sint32 m = 0; m < std::max<sint32>(1, tex->mipLevels); m++)
-				LatteTextureReplace::RecordRenameMapping(tex->replLegacyHash, tex->replStrongHash, tex->width, tex->height, (uint32)format, m);
+				LatteTextureReplace::RecordRenameMapping(tex->replLegacyHash, currentHash, tex->width, tex->height, (uint32)format, m);
 		}
 	}
 
@@ -826,11 +828,10 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 		fs::path path = ActiveSettings::GetUserDataPath("dump/textures");
 		if (LatteTextureReplace::IsEnabled())
 		{
-			// name the dump with the same key the replacement loader matches on, so a dumped
-			// filename can be reused verbatim as the replacement filename
-			uint64 texHashForDump = tex->replStrongHash;
-			if (texHashForDump == 0)
-				texHashForDump = LatteTextureReplace::HashGuest(physImagePtr, (uint32)textureLoader.maxOffsetOutdated, tex->width * tex->height, tex->format);
+			// name the dump with the hash the replacement loader matches on, so a dumped filename can
+			// be reused verbatim as the replacement filename. Always the current scheme: the lookup key
+			// in replStrongHash is the older hash while an older pack replaces this texture.
+			const uint64 texHashForDump = LatteTextureReplace::HashGuestCurrent(physImagePtr, (uint32)textureLoader.maxOffsetOutdated, tex->width * tex->height, tex->format);
 			path /= fmt::format("{:016x}_{:d}x{:d}_fmt{:04x}_mip{:02d}.tga", texHashForDump, tex->width, tex->height, (uint32)tex->format, mipIndex);
 		}
 		else
