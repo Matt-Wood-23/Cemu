@@ -35,7 +35,12 @@ cp dist/linux/info.cemu.Cemu.metainfo.xml AppDir/usr/share/metainfo/info.cemu.Ce
 
 cp -r bin/* AppDir/usr/share/Cemu
 
-mv AppDir/usr/share/Cemu/Cemu_release AppDir/usr/bin/Cemu
+# a local build names the binary Cemu_release, the CI build Cemu
+if [[ -f AppDir/usr/share/Cemu/Cemu_release ]]; then
+	mv AppDir/usr/share/Cemu/Cemu_release AppDir/usr/bin/Cemu
+else
+	mv AppDir/usr/share/Cemu/Cemu AppDir/usr/bin/Cemu
+fi
 chmod +x AppDir/usr/bin/Cemu
 
 # Bundle a few libraries that some target distros lack. Library names and
@@ -65,7 +70,10 @@ fi
 echo "Cemu Version Cemu-${GITVERSION}"
 
 rm -f AppDir/usr/lib/libwayland-client.so.0
-echo -e "export LC_ALL=C\nexport FONTCONFIG_PATH=/etc/fonts" >> AppDir/apprun-hooks/linuxdeploy-plugin-gtk.sh
+# only exists when the gtk plugin ran, which this script no longer uses
+if [[ -f AppDir/apprun-hooks/linuxdeploy-plugin-gtk.sh ]]; then
+	echo -e "export LC_ALL=C\nexport FONTCONFIG_PATH=/etc/fonts" >> AppDir/apprun-hooks/linuxdeploy-plugin-gtk.sh
+fi
 VERSION="${GITVERSION}" ./mkappimage.AppImage --appimage-extract-and-run "${GITHUB_WORKSPACE}"/AppDir
 
 mkdir -p "${GITHUB_WORKSPACE}"/artifacts/
