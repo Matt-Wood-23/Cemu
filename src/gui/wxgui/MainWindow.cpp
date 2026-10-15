@@ -888,7 +888,11 @@ void MainWindow::OnPauseMenu(wxCommandEvent& event)
 {
 	const bool checked = event.IsChecked();
 	if (event.GetId() == MAINFRAME_MENU_ID_FILE_PAUSE_EMULATION)
+	{
 		SetEmulationPaused(checked);
+		if (checked && !CafeSystem::IsTitlePaused() && CafeSystem::IsTitleOnline())
+			wxMessageBox(_("Pause is unavailable while the game is online: a paused game stops answering, and the session drops you."), _("Pause emulation"), wxOK | wxICON_INFORMATION, this);
+	}
 	else
 	{
 		GetWxGUIConfig().pause_on_focus_loss = checked;
@@ -903,6 +907,8 @@ void MainWindow::PauseForFocusLoss()
 	if (!GetWxGUIConfig().pause_on_focus_loss || !m_game_launched || !CafeSystem::IsTitleRunning() || CafeSystem::IsTitlePaused())
 		return;
 	CafeSystem::PauseTitle();
+	if (!CafeSystem::IsTitlePaused())
+		return; // refused, the game is online
 	m_autoPaused = true;
 	if (m_pauseMenuItem)
 		m_pauseMenuItem->Check(true);

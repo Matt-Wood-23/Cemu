@@ -343,6 +343,11 @@ namespace GameMode
 		// Pause / resume goes through the main window so File > Pause emulation stays in step
 		void SetPaused(bool paused)
 		{
+			if (paused && CafeSystem::IsTitleOnline())
+			{
+				s_state.message = U8(_("Pause is unavailable while the game is online"));
+				return;
+			}
 			wxTheApp->CallAfter([paused]() {
 				if (g_mainFrame)
 					g_mainFrame->SetEmulationPaused(paused);

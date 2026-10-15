@@ -84,6 +84,10 @@ uint32 currentUpdatedApplicationHash = 0;
 
 bool isLaunchTypeELF = false;
 
+// nsysnet.h brings in WinSock2.h, which does not mix with what this file includes before it
+sint32 nsysnet_getOpenSocketCount();
+void nsysnet_closeAllSockets();
+
 MPTR _entryPoint = MPTR_NULL;
 
 uint32 generateHashFromRawRPXData(uint8* rpxData, sint32 size)
@@ -940,6 +944,11 @@ namespace CafeSystem
 		std::lock_guard lock(sPauseMutex);
 		if (!sSystemRunning || sTitlePaused)
 			return;
+		if (IsTitleOnline())
+		{
+			cemuLog_log(LogType::Force, "Pause refused: the game is online");
+			return;
+		}
 		sTitlePaused = true;
 		coreinit::SuspendActiveThreads();
 		PPCTimer_setPaused(true); // the console clock stops too, so in-game timers do not run on
@@ -963,6 +972,11 @@ namespace CafeSystem
 	bool IsTitlePaused()
 	{
 		return sTitlePaused;
+	}
+
+	bool IsTitleOnline()
+	{
+		return sSystemRunning && nsysnet_getOpenSocketCount() > 0;
 	}
 
 	TitleId GetForegroundTitleId()
@@ -1112,6 +1126,7 @@ namespace CafeSystem
 		nn::save::ResetToDefaultState();
 		coreinit::__OSDeleteAllActivePPCThreads();
 		RPLLoader_UnloadAll();
+		nsysnet_closeAllSockets();
 		for(auto it = s_iosuModules.rbegin(); it != s_iosuModules.rend(); ++it)
 			(*it)->TitleStop();
 		// reset Cemu subsystems
