@@ -1168,7 +1168,12 @@ namespace
 	private:
 		CemuAudioSink() = default;
 		static constexpr int kRate = 48000;
-		static constexpr int kBlock = 1024;
+		// 100 ms, as Cemu's own boot sound uses. DirectSound (the default backend) is asked for the
+		// next block when the previous one starts playing, but on current Windows it has already
+		// committed about 30 ms ahead by then. A 1024-frame (21 ms) block was cut by that point every
+		// time, half new sound and half the previous lap's, which crackled. A block longer than the
+		// committed span starts after it.
+		static constexpr int kBlock = 4800;
 		AudioAPIPtr m_device;
 	};
 
