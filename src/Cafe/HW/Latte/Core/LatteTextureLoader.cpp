@@ -668,6 +668,8 @@ void LatteTextureLoader_UpdateTextureSliceData(LatteTexture* tex, uint32 sliceIn
 	if (mipIndex == 0 && sliceIndex == 0 && LatteTextureReplace::IsEnabled() && (Latte::IsCompressedFormat(format) || _replUncompressed))
 	{
 		tex->replStrongHash = LatteTextureReplace::HashGuest(physImagePtr, (uint32)textureLoader.maxOffsetOutdated, tex->width * tex->height, format);
+		// Read on every reload, since a reused texture object can now hold a different texture
+		tex->replFilter = (uint8)LatteTextureReplace::GetFilter(tex->replStrongHash);
 		// Same inputs, pre-discriminator algorithm. Only used to build rename_map.csv so an existing
 		// pack can be migrated to the new names; nothing looks a texture up by this. Recorded here
 		// rather than from the dump block below because it needs only the two hashes, and because
