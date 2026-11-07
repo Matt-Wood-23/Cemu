@@ -48,7 +48,9 @@ namespace SaveStates
 		fp.buildVersion = BUILD_VERSION_STRING;
 		fp.titleId = (uint64)CafeSystem::GetForegroundTitleId();
 		fp.titleVersion = CafeSystem::GetForegroundTitleVersion();
-		fp.isMulticoreMode = coreinit::__CemuIsMulticoreMode() ? 1 : 0;
+		// the launch decision, not coreinit's flag: that is only set once the scheduler
+		// starts, after the File menu has already been built
+		fp.isMulticoreMode = CafeSystem::IsMulticoreLaunch() ? 1 : 0;
 		// phase 1: hash the applied graphic pack patch bytes. Until then a state taken
 		// with a different set of patches enabled is accepted and may desync. See the
 		// determinism fingerprint section of the design doc.

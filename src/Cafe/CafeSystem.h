@@ -30,6 +30,9 @@ namespace CafeSystem
 	PREPARE_STATUS_CODE PrepareForegroundTitleFromStandaloneRPX(const fs::path& path);
 	void LaunchForegroundTitle();
 	bool IsTitleRunning();
+	// true when the running title uses 3 emulated cores, false for 1. Set when the title
+	// launches, so it is valid before the scheduler threads exist.
+	bool IsMulticoreLaunch();
 
 	// Pause: every game thread is suspended and audio output stops. The CPU idle loop and the GPU
 	// thread slow their polling right down, and the last frame keeps being shown (with the

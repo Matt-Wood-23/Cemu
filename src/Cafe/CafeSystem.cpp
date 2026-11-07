@@ -452,6 +452,7 @@ namespace CafeSystem
 	std::optional<sint32> s_foregroundReturnStatus;
 
 	bool sSystemRunning = false;
+	bool sLaunchMulticore = false; // core count picked at launch, before the scheduler starts
 	std::atomic_bool sTitlePaused = false;
 	std::mutex sPauseMutex;
 	TitleId sForegroundTitleId = 0;
@@ -918,15 +919,16 @@ namespace CafeSystem
 			module->TitleStart();
 		cemu_initForGame();
 		// enter scheduler
-		if ((ActiveSettings::GetCPUMode() == CPUMode::MulticoreRecompiler || LaunchSettings::ForceMultiCoreInterpreter()) && !LaunchSettings::ForceInterpreter())
-			coreinit::OSSchedulerBegin(3);
-		else
-			coreinit::OSSchedulerBegin(1);
+		coreinit::OSSchedulerBegin(sLaunchMulticore ? 3 : 1);
 	}
 
 	void LaunchForegroundTitle()
 	{
 		PPCTimer_waitForInit();
+		// Decide the core count here rather than on the launch thread: the UI builds its
+		// save state menu right after this returns, and the slots' compatibility check
+		// needs the core count before the scheduler has started.
+		sLaunchMulticore = (ActiveSettings::GetCPUMode() == CPUMode::MulticoreRecompiler || LaunchSettings::ForceMultiCoreInterpreter()) && !LaunchSettings::ForceInterpreter();
 		// start system
 		sSystemRunning = true;
 		WindowSystem::NotifyGameLoaded();
@@ -937,6 +939,11 @@ namespace CafeSystem
 	bool IsTitleRunning()
 	{
 		return sSystemRunning;
+	}
+
+	bool IsMulticoreLaunch()
+	{
+		return sLaunchMulticore;
 	}
 
 	void PauseTitle()
