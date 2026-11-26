@@ -9,6 +9,7 @@
 #include <fstream>
 #include <mutex>
 #include <sstream>
+#include <unordered_map>
 
 namespace CheatManager
 {
@@ -16,9 +17,34 @@ namespace CheatManager
 	// copy of that code, or the game keeps running the old instructions.
 	static constexpr uint32_t kCodeRegionEnd = 0x10000000;
 
+	// Which cheat wrote what to an address. Code addresses (below kCodeRegionEnd) are kept for the
+	// whole activation, since code doesn't move; other addresses only for the current frame, since
+	// heap memory gets reused.
+	struct WriteClaim
+	{
+		size_t cheat;
+		uint32_t value;
+		uint32_t size;
+	};
+	using ClaimMap = std::unordered_map<uint32_t, WriteClaim>;
+
 	class CemuMemory final : public GatewayCheat::Memory
 	{
 	public:
+		CemuMemory(ClaimMap& codeClaims, ClaimMap& frameClaims) : m_codeClaims(codeClaims), m_frameClaims(frameClaims) {}
+
+		// Starts a cheat's run. Its writes are checked against the other cheats' writes.
+		void Begin(size_t cheat)
+		{
+			m_cheat = cheat;
+			m_blocked = false;
+		}
+		// Set when the cheat tried to write a different value to an address another cheat writes.
+		// It made no writes from that point on.
+		bool Blocked() const { return m_blocked; }
+		size_t ClashCheat() const { return m_clashCheat; }
+		uint32_t ClashAddress() const { return m_clashAddress; }
+
 		bool IsValid(uint32_t address, uint32_t size) override
 		{
 			if (size == 0 || (uint64_t)address + size > 0x100000000ull)
@@ -33,27 +59,55 @@ namespace CheatManager
 		// unchanged instruction must not throw away recompiled code 60 times a second.
 		void Write32(uint32_t address, uint32_t value) override
 		{
-			if (memory_readU32(address) == value)
+			if (!Claim(address, 4, value) || memory_readU32(address) == value)
 				return;
 			memory_writeU32(address, value);
 			Invalidate(address, 4);
 		}
 		void Write16(uint32_t address, uint16_t value) override
 		{
-			if (memory_readU16(address) == value)
+			if (!Claim(address, 2, value) || memory_readU16(address) == value)
 				return;
 			memory_writeU16(address, value);
 			Invalidate(address, 2);
 		}
 		void Write8(uint32_t address, uint8_t value) override
 		{
-			if (memory_readU8(address) == value)
+			if (!Claim(address, 1, value) || memory_readU8(address) == value)
 				return;
 			memory_writeU8(address, value);
 			Invalidate(address, 1);
 		}
 
 	private:
+		// False if another cheat already writes a different value here: the write must not happen,
+		// or the two cheats would rewrite each other every frame.
+		bool Claim(uint32_t address, uint32_t size, uint32_t value)
+		{
+			if (m_blocked)
+				return false;
+			ClaimMap& claims = address < kCodeRegionEnd ? m_codeClaims : m_frameClaims;
+			auto [it, inserted] = claims.try_emplace(address, WriteClaim{m_cheat, value, size});
+			if (inserted || it->second.cheat == m_cheat)
+			{
+				it->second = WriteClaim{m_cheat, value, size};
+				return true;
+			}
+			if (it->second.value == value && it->second.size == size)
+				return true;
+			m_blocked = true;
+			m_clashCheat = it->second.cheat;
+			m_clashAddress = address;
+			return false;
+		}
+
+		ClaimMap& m_codeClaims;
+		ClaimMap& m_frameClaims;
+		size_t m_cheat = 0;
+		bool m_blocked = false;
+		size_t m_clashCheat = 0;
+		uint32_t m_clashAddress = 0;
+
 		static void Invalidate(uint32_t address, uint32_t size)
 		{
 			if (address < kCodeRegionEnd)
@@ -66,6 +120,7 @@ namespace CheatManager
 		std::string name;
 		GatewayCheat::Code code;
 		bool errorReported = false;
+		bool stopped = false; // clashed with an earlier cheat in the list; skipped until the list changes
 	};
 
 	static std::mutex s_mutex;
@@ -73,6 +128,9 @@ namespace CheatManager
 	static bool s_titleRunning = false;
 	static std::vector<ActiveCheat> s_active;
 	static std::atomic<bool> s_hasActive{false};
+	// write claims (see CemuMemory), guarded by s_mutex
+	static ClaimMap s_codeClaims;
+	static ClaimMap s_frameClaims;
 
 	fs::path GetCheatFolder()
 	{
@@ -119,6 +177,7 @@ namespace CheatManager
 	static void ActivateLocked(const std::vector<Cheat>& cheats)
 	{
 		s_active.clear();
+		s_codeClaims.clear();
 		for (const auto& c : cheats)
 		{
 			if (!c.enabled)
@@ -212,11 +271,25 @@ namespace CheatManager
 		std::unique_lock lock(s_mutex, std::try_to_lock);
 		if (!lock.owns_lock())
 			return;
-		CemuMemory mem;
-		for (auto& a : s_active)
+		s_frameClaims.clear();
+		CemuMemory mem(s_codeClaims, s_frameClaims);
+		for (size_t i = 0; i < s_active.size(); i++)
 		{
+			auto& a = s_active[i];
+			if (a.stopped)
+				continue;
+			mem.Begin(i);
 			std::string error;
-			if (!a.code.Execute(mem, &error) && !a.errorReported)
+			const bool ok = a.code.Execute(mem, &error);
+			if (mem.Blocked())
+			{
+				a.stopped = true;
+				cemuLog_log(LogType::Force, "[Cheats] '{}' stopped: it writes a different value to {:08x} than '{}'. "
+					"Two cheats that change the same address rewrite each other every frame and can crash the game. Keep only one of them on.",
+					a.name, mem.ClashAddress(), s_active[mem.ClashCheat()].name);
+				continue;
+			}
+			if (!ok && !a.errorReported)
 			{
 				// keep running it: the address may become valid later (e.g. after a heap allocation)
 				cemuLog_log(LogType::Force, "[Cheats] '{}': {}", a.name, error);

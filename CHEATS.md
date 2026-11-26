@@ -14,18 +14,23 @@ Tick a cheat to enable it. Ticking saves the file immediately and, if the game i
 Files live in `<Cemu user data>/cheats/<titleId>.txt` (the Cheats window shows the exact path):
 
 ```
+*cemu_user_choices
+
 [Equipment box in Port Tanzia tavern]
 {Wii U port of the 3DS code}
 *cemu_enabled
 02XXXXXX 38A00000
 ```
 
+- `*cemu_user_choices` on the first line means the enabled marks are the player's. Cemu writes it whenever it saves the file. **A file without it starts with every cheat off**, so a cheat set you download or copy in runs nothing until you tick what you want.
 - `[name]` starts a cheat.
 - `{notes}` is optional and may span several lines.
 - `*cemu_enabled` marks the cheat as on. `*citra_enabled` is accepted too.
 - Each code line is two 8-digit hex values.
 
 Enabled cheats run once per vsync (about 60 times a second).
+
+**Don't turn on two cheats that change the same address**, such as two variants of one cheat. They would overwrite each other every frame, and if the address is game code, the game can crash. Cemu stops the later one in the list and says so in log.txt (`[Cheats] '...' stopped: ...`).
 
 ## Differences from 3DS codes
 

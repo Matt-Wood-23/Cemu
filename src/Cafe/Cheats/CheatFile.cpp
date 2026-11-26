@@ -21,9 +21,16 @@ namespace CheatManager
 		std::istringstream in(text);
 		std::string raw;
 		bool inNotes = false;
+		bool userChoices = false;
 		while (std::getline(in, raw))
 		{
 			std::string line = Trim(raw);
+
+			if (!inNotes && cheats.empty() && line == kUserChoicesMarker)
+			{
+				userChoices = true;
+				continue;
+			}
 
 			if (inNotes)
 			{
@@ -76,12 +83,19 @@ namespace CheatManager
 
 			cheats.back().code.push_back(line);
 		}
+		// A file Cemu didn't save (downloaded, or copied from Citra) starts with every cheat off:
+		// its enabled lines are someone else's choices, and a set often holds variants of one cheat
+		// that must not run together.
+		if (!userChoices)
+			for (auto& c : cheats)
+				c.enabled = false;
 		return cheats;
 	}
 
 	std::string Serialize(const std::vector<Cheat>& cheats)
 	{
-		std::string out;
+		std::string out = kUserChoicesMarker;
+		out += "\n\n";
 		for (const auto& c : cheats)
 		{
 			out += '[';

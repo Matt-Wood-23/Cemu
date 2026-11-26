@@ -16,8 +16,19 @@
 // "*citra_enabled" is accepted as well, so a Citra cheat file's structure carries over (its codes
 // still need Wii U addresses). Enabled cheats run once per vsync (about 60 times a second) while
 // the title is running. See GatewayCheat.h for the code types.
+//
+// Cemu writes "*cemu_user_choices" as the file's first line when it saves it. The enabled lines are
+// only read from a file that has it, so a cheat file someone downloads or copies in starts with
+// every cheat off, and the player turns on the ones they want.
+//
+// Two enabled cheats must not write different values to the same address: they would overwrite
+// each other every frame, and when the address is code the game runs, the recompiler throws its
+// code away under the running game (crashes). The first of the two in the list keeps running; the
+// later one is stopped for the session and the clash is logged.
 namespace CheatManager
 {
+	inline constexpr const char* kUserChoicesMarker = "*cemu_user_choices";
+
 	struct Cheat
 	{
 		std::string name;
